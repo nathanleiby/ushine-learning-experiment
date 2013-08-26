@@ -1,0 +1,3204 @@
+script
+
+  var DEBUG = true;
+  if ( ! DEBUG) {
+    // 1-liner to disable all console.log statements
+    console.log = function() {}
+  }
+
+  // Walkthrough tutorial
+  var SHOW_TUTORIAL = true;
+  var guider = guiders;
+
+  var lastMessageEndExperiment = false;
+  var messageIdx = -1;
+  var currentMessage = {'id' : -1};
+  var selections = [];
+  var markupLength = 7;
+  var taskDivs = ['pii','location','url','category'];
+  var taskStartTimes = {};
+  var currentTaskIdx = -1;
+  var message_tokens = [];
+  var TOKEN_INDEX_TAG = 'TOKEN_INDEX_TAG';
+  
+  // Experiment mode: 0 = unenhanced, 1 = DSSG, 2 = Perfect
+  var experimentMode = 1;
+
+  var messages = [];  // see messages at bottom of file
+
+  function pad(num, size) {
+      var s = num+"";
+      while (s.length < size) s = "0" + s;
+      return s;
+  }
+
+  var count=15*60;
+  var counter;
+  function timer()
+  {
+    // Tick
+    count=count-1;
+
+    // Update the clock
+    var minutesRemaining = pad (Math.floor( count / 60 ), 2);
+    var secondsRemaining = pad (count % 60 , 2);
+    $('#header-timer').text(minutesRemaining + ':' + secondsRemaining + " remaining");
+
+    // Check if time expired
+    if (count <= 0)
+    {
+      clearInterval(counter);
+      guiders.show('end1');
+    }
+  }
+
+  function continueExperiment() {
+    guiders.hideAll();
+    count=5*60;
+    counter=setInterval(timer, 1000); // tick every 1 second
+  }
+
+  function quitExperiment() {
+    guiders.hideAll()
+    clearInterval(counter);
+    socket.emit('end_experiment', 'out of time');
+    lastMessageEndExperiment = true;
+    guider.show('end2');
+  }
+
+  // Fix tokenization to allow easy highlighting but keep commas, symbols, and line breaks
+  function tokenizeText(text) {
+    var tokens = text.split(" ");
+    var updated_tokens = [];
+
+    // Split on ,
+    for (var t in tokens) {
+      console.log(tokens[t]);
+      var split_token = tokens[t].split(',');
+      console.log(split_token);
+      for (var st in split_token) {
+        if (st != 0) {
+          updated_tokens.push(',');  
+        }
+        updated_tokens.push(split_token[st]);
+      }
+    }
+    tokens = updated_tokens;
+    updated_tokens = [];
+
+    // Split on \n
+    for (var t in tokens) {
+      console.log(tokens[t]);
+      var split_token = tokens[t].split('\n');
+      console.log(split_token);
+      for (var st in split_token) {
+        if (st != 0) {
+          updated_tokens.push('<br /><br />');  
+        }
+        updated_tokens.push(split_token[st]);
+      }
+    }
+    //- //- return text.split(/[\s,]+/);
+    tokens = updated_tokens;
+    return tokens;
+  }
+
+  function nextMessage() {
+    if(lastMessageEndExperiment) {
+      updateExperimentStage('exit_survey');
+    }
+
+    if (messageIdx > -1) {
+      taskStartTimes['NEXT'] = new Date().getTime();
+
+      // Log user `
+      var location = $('#locationinput').prop('value');
+      var url = $('textarea#urlinput').prop('value');
+      var checkbox_selection = $('div#category input:checkbox');
+      var categories = {};
+      for (var idx=0; idx < checkbox_selection.length; idx++) {
+        var checkbox = checkbox_selection[idx];
+        categories[checkbox.value] = checkbox.checked;
+      }
+      //- var checkboxes = $('.categorycheckbox').prop('checked');
+      var results = {
+        'pii' : {
+          'duration' : taskStartTimes['location'] - taskStartTimes['pii'],
+          'value' : selections,
+        },
+        'location' : {
+          'duration' : taskStartTimes['url'] - taskStartTimes['location'],
+          'value' : location
+        },
+        'url' : {
+          'duration' : taskStartTimes['category'] - taskStartTimes['url'],
+          'value' : url
+        },
+        'categories' : {
+          'duration' : taskStartTimes['NEXT'] - taskStartTimes['category'],
+          'value' : categories
+        },
+      };
+      socket.emit('end_message', messageIdx, currentMessage.id, results);
+    } 
+
+    // Reset task start times .. capture without logging, out of curiosity?
+    taskStartTimes = { 'pii' : 0, 'location' : 0, 'url' : 0, 'category' : 0, 'NEXT' : 0 };
+
+    // Get next message
+    messageIdx++;
+
+    // Show tutorial pop-up on the 0th message, a fake one for practice
+    //- if (messageIdx == 0) {
+
+    //- }
+
+    // Start clock on the first REAL message
+    if (messageIdx == 1) {
+      counter=setInterval(timer, 1000); // tick every 1 second
+    }
+
+    if (messageIdx == messages.length) {
+      // experiment done!
+      socket.emit('end_experiment', 'out of messages');
+      updateExperimentStage('exit_survey');
+      return;
+    }
+
+    currentMessage = messages[messageIdx];
+    var text = currentMessage['text'];
+
+    // Tokenize text for highlighting
+    message_tokens = tokenizeText(text);
+    var htmlText = "";
+    for (t in message_tokens) {
+      //- console.log(t)
+
+      if (message_tokens[t] != ',') {
+        htmlText += ' ';  
+      }
+      htmlText += '<span class="messageToken" id="'+ TOKEN_INDEX_TAG + t + '">';
+      htmlText += message_tokens[t];
+      htmlText += '</span>';
+    }
+
+    // TODO: Move to own fn
+    var categories;
+    // Update category confidence bars
+    if (experimentMode > 0) {
+      if (experimentMode == 1) { // DSSG
+        categories = currentMessage['suggested_categories'];
+      }
+      else if (experimentMode == 2) { // Perfect
+        categories = currentMessage['faked_suggested_categories'];
+      }
+    
+      for (var cat in categories) {
+        var conf = categories[cat];
+        cat = cat.replace(' ', '');
+        cat = cat.replace(' ', '');
+        cat = cat.replace('+', '');
+
+        level = Math.round(conf * 10)*10;
+        //$('p#messageHolder').text(cat + " " + conf + " " + level);
+        var confBar = $('#confidencebar-' + cat + ' .confidencebar-level');
+        for (var k=0; k <= 100; k += 10) {
+          confBar.removeClass('confidencebar-'+k);
+        }
+
+        confBar.addClass('confidencebar-'+level);
+      }
+    }
+
+    // Update UI
+    $('p#messageHolder').html(htmlText);
+    $('.messageToken').click(clickMessageToken);  // Add listeners for highlight clicking
+    updateMessageSuggestionHighlighting();
+
+    $('p#highlightsHolder').text("");
+    var messagesCompleted = messageIdx - 1; // avoids counting the tutorial message
+    if (messagesCompleted == 1) {
+      $('span#header-completed').text(messagesCompleted + " message completed");
+    }
+    else if (messagesCompleted >= 0) {
+      $('span#header-completed').text(messagesCompleted + " messages completed");
+    }
+
+    // Reset all input boxes to empty
+    console.log('reset values');
+    $('#locationinput').prop('value','');
+    $('textarea#urlinput').prop('value','');
+    $('.categorycheckbox').prop('checked', false);
+
+
+    // Log event     
+    socket.emit('start_message', messageIdx, currentMessage.id);
+
+    // Start first task (and reset all task-specific state)
+    selections = [];
+
+    currentTaskIdx = -1;
+    nextTask();
+  };
+
+  var endGuider = guider.createGuider({
+    //- attachTo: "#url",
+    buttons: [{name: "I'll do more!", onclick: continueExperiment}, {name: "I'm Done.", onclick: quitExperiment}],
+    description: "Great job! Do you have 5 more minutes to help review more messages?",
+    id: "end1",
+    //- next: "u2",
+    //- position: 6,
+    overlay: true,
+    title: "Thanks!",
+    width: 300
+  });
+
+  var endThanksGuider = guider.createGuider({
+    //- attachTo: "#url",
+    buttons: [{name: "Close", onclick: guider.hideAll}],
+    description: "Almost done! <b>Please finish the current message. </b><br /><br />We'll then present you with a few exit survey questions.",
+    id: "end2",
+    //- next: "u2",
+    //- position: 6,
+    overlay: true,
+    title: "Thanks!",
+    width: 300
+  });
+
+  function skipTutorial(){
+    SHOW_TUTORIAL = false;
+    startMessageAnnotation();
+    nextMessage();
+    guider.hideAll();
+  }
+
+  function _getTutorialGuider() {
+    guider.hideAll();
+    var text = "";
+    if (currentTaskIdx == 0) {
+      // General
+
+      text = "Imagine you are processing reports submitted by citizens during a controversial election in the Philippines.";
+      text += "<br /><br />Once the reports are processed, they will be published on a public map, to give people a better understanding of the situation.";
+      text += "<br /><br />Follow this short tutorial on how to process messages.";
+      
+      guider.createGuider({
+        //- attachTo: "#message",
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "m1",
+        next: "m2",
+        overlay: true,
+        title: "Welcome!",
+        width: 400
+      }).show();
+
+      text = "Here is a practice message.";
+      text += "<br /><br />Begin by taking a moment to read the text, as it will help you with all future tasks.";
+      if (experimentMode > 0) {
+        text += "<br /><br />The computer has automatically highlighted some words it thinks will be helpful to you when you are reading.";
+      }
+
+      // The message
+      guider.createGuider({
+        attachTo: "#message",
+        highlight: "#message",
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "m2",
+        next: "p1",
+        overlay: true,
+        position: 6,
+        title: "Message",
+        width: 300
+      });
+
+      // PII
+      // Explain pt1
+      text = "Some messages contain personal or sensitive information that should not be published, to protect people’s privacy."
+      text += "<br /><br />You might see people's names, phone or ID numbers, building addresses, email addresses, twitter usernames, etc."
+      text += "<br /><br />Please do NOT consider URLs (links) to be private."
+      if (experimentMode > 0) {
+        text += "<br /><br />The computer highlights, in <span class=\"guess-pii\">red</span>, words it suspects are sensitive. Remember, suggestions <b>may or may not be correct.</b>";
+      }
+
+      guider.createGuider({
+        //- attachTo: "#pii",
+        //- position: 6,
+        //- highlight: '#pii',
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "p1",
+        next: "p2",
+        overlay: true,
+        title: "Task #1: Sensitive information",
+        width: 300
+      });
+
+      // Example
+      text = "Here is an example of sensitive information - a person’s name.";
+      text += "<br /><br /><b>Click</b> to highlight (or unhighlight) private information.";
+      guider.createGuider({
+        attachTo: "#TOKEN_INDEX_TAG31",
+        highlight: "#TOKEN_INDEX_TAG31",
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "p2",
+        next: "p3",
+        overlay: true,
+        position: 6,
+        title: "Task #1: Sensitive information",
+        width: 300
+      });
+
+      // do it!
+      text = "<b>Click</b> to highlight any other words you think are sensitive."
+      text += "<br /><br />Then click the 'done' button."
+
+      guider.createGuider({
+        buttons: [{name: "Next", onclick: guider.hideAll}],
+        overlay: true,
+        //- highlight: '#pii input.nexttask',
+        //- attachTo: '#pii input.nexttask',
+        //- position: 9,
+        description: text,
+        id: "p3",
+        //- next: "p4",
+        title: "Task #1: Sensitive information",
+        width: 300
+      });
+
+    } else if (currentTaskIdx == 1) {
+      // Location
+
+      // Overview
+      text = "Where is the incident happening?";
+      if (experimentMode > 0) {
+        text += "<br /><br />The computer highlights, in <span class=\"guess-location\">orange</span>, words it suspects are locations. Remember, these suggestions <b>may or may not be correct</b>.";
+      }
+
+      guider.createGuider({
+        //- attachTo: "#location",
+        //- position: 12,
+        //- highlight: "#location",
+        overlay: true,
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "l1",
+        next: "l2",
+        title: "Task #2: Location",
+        width: 300
+      }).show();
+
+      // Example
+      text = "Here is an example of a <b>location</b>: 'Ufafa high school'.";
+
+      guider.createGuider({
+        attachTo: "#TOKEN_INDEX_TAG15",
+        highlight: "#TOKEN_INDEX_TAG15",
+        overlay: true,
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "l2",
+        next: "l3",
+        position: 6,
+        title: "Task #2: Location",
+        width: 300
+      });
+      
+      // do it!
+      text = "";
+      text += "Type or copy-paste the location from the message into the box below.";
+      text += "<br /><br />Then click the 'done' button.";
+
+      guider.createGuider({
+        attachTo: "#locationinput",
+        position: 12,
+        highlight: "#locationinput",
+        overlay: true,
+        buttons: [{name: "Next", onclick: guider.hideAll}],
+        description: text,
+        id: "l3",
+        next: "l4",
+        title: "Task #2: Location",
+        width: 300
+      });
+      
+    } else if (currentTaskIdx == 2) {
+      // URL
+
+      text = "Some messages have links (URLs) to videos, photos, etc.";
+      if (experimentMode > 0) {
+        text += "<br /><br />The computer highlights, in <span class=\"guess-url\">green</span>, words it suspects are URLs. Remember, these suggestions <b>may or may not be correct</b>.";
+      }      
+
+      guider.createGuider({
+        //- attachTo: "#url",
+        buttons: [{name: "Next", onclick: guider.next}],
+        description: text,
+        id: "u1",
+        next: "u2",
+        //- position: 6,
+        overlay: true,
+        title: "Task #3: URL",
+        width: 300
+      }).show();
+
+      // Example
+      text = "Here an example of a <b>URL</b>.";
+      text += "<br /><br />Type or copy-paste the URL from the message into the box below.";
+      text += "<br /><br />Then click the 'done' button.";
+
+      guider.createGuider({
+        attachTo: "#TOKEN_INDEX_TAG36",
+        highlight: "#TOKEN_INDEX_TAG36",
+        position: 6,
+        overlay: true,
+        buttons: [{name: "Next", onclick: guider.hideAll}],
+        description: text,
+        id: "u2",
+        next: "u3",
+        position: 6,
+        title: "Task #3: URL",
+        width: 300
+      });
+
+    } else if (currentTaskIdx == 3) {
+      
+      // Category
+      //- guider.createGuider({
+      //-   //- attachTo: "#category",
+      //-   buttons: [{name: "Next", onclick: guider.next}],
+      //-   description: text,
+      //-   id: "c1",
+      //-   next: "c2",
+      //-   //- position: 6,
+      //-   overlay: true,
+      //-   title: "Task #4: Categories",
+      //-   width: 300
+      //- });
+
+      text = "Every report is assigned to one or more categories.";
+      if (experimentMode > 0) {
+        text += "<br /><br />The computer rates how much it thinks a report belongs to each category. Remember, these suggestions <b>may or may not be correct</b>.";
+        text += "<br /><br />Check one or more categories which <b>you</b> think best describe the report."; 
+      } else {
+        text += "<br /><br />Check one or more categories which you think best describe the report.";  
+      }   
+
+      // Category
+      guider.createGuider({
+        attachTo: "#category",
+        position: 12,
+        highlight: "#category",
+        buttons: [{name: "Next", onclick: guider.hideAll}],
+        description: text,
+        id: "c2",
+        next: "c3",
+        //- position: 6,
+        overlay: true,
+        title: "Task #4: Categories",
+        width: 300
+      }).show();
+    } 
+  }
+
+  function nextTask() {
+    console.log('next task');
+
+    currentTaskIdx++;
+    currentTaskIdx %= taskDivs.length;
+
+    // Show tutorial if mesageIdx == 0
+    if (SHOW_TUTORIAL) {
+      if (messageIdx == 0) {
+        _getTutorialGuider();
+      }
+    }
+
+    taskStartTimes[taskDivs[currentTaskIdx]] = new Date().getTime();
+
+    //- console.log('current task idx =', currentTaskIdx)
+    for (t in taskDivs) {
+      var css_selector = "div#" + taskDivs[t];
+
+      if (t == currentTaskIdx) {
+        // Enable current task
+        $(css_selector).addClass('enabled');
+        $(css_selector).children().prop('disabled',false);   
+      } else {
+        // Disable other tasks
+        $(css_selector).removeClass('enabled')
+        $(css_selector).children().prop('disabled',true);   
+      }
+
+      var css_selector = "div#category input:checkbox";
+      if (taskDivs[currentTaskIdx] == 'category') {
+        // enable checkboxes
+        $(css_selector).prop('disabled',false); 
+      } else {
+        // disable checkboxes
+        $(css_selector).prop('disabled',true); 
+      }
+
+    }
+
+    // Emit start_task event
+    socket.emit('start_task', messageIdx, currentMessage.id, currentTaskIdx, taskDivs[currentTaskIdx]);
+  }
+
+  var experimentStages = ['intro_survey', 'tutorial', 'annotate_messages', 'exit_survey', 'thankyou_goodbye']; 
+  function updateExperimentStage(active_stage) {
+    // have all hidden by default in layout.jade file
+    console.log(active_stage);
+    for (var s in experimentStages) {
+      var stage_id = experimentStages[s];
+      $('#' + stage_id).prop('class', 'inactiveStage');
+      $('#' + stage_id).hide();
+      if (active_stage == stage_id) {
+        $('#' + stage_id).show();
+        $('#' + stage_id).prop('class', 'activeStage');
+      }
+    }
+  }
+
+  function startMessageAnnotation() {
+    updateExperimentStage('annotate_messages');
+    nextMessage();
+  }
+
+  function clickMessageToken(e) {
+    if (taskDivs[currentTaskIdx] != 'pii') {
+      return;
+    }
+
+    var my_id = $(this).attr('id');
+    token_text = $('#' + my_id).text()
+    console.log('clicked token', my_id);
+    var token = {
+      'idx' : my_id.replace(TOKEN_INDEX_TAG, ''),
+      'text' : token_text,
+    };
+
+    var tokenExistsAlready = false;
+    for (var i=0; i<selections.length; i++) {
+      if (selections[i].idx == token.idx && selections[i].text == token.text) {
+        tokenExistsAlready = true;
+        selections.splice(i,1);
+        break;
+      }   
+    }
+
+    if (! tokenExistsAlready) {
+      selections.push(token);
+    }
+    console.log(selections);
+
+    // Update all highlighting
+    updateMessageHighlighting();
+  }
+
+  function _suggestionHighlightHelper(highlight_type, token, t) {
+    //  Which suggestions?
+    var suggestions = [];
+    if (highlight_type == 'pii' && experimentMode == 1) {
+      suggestions = currentMessage.suggested_pii;
+    } else if (highlight_type == 'pii' && experimentMode == 2) {
+      suggestions = currentMessage.actual_pii;
+    } else if (highlight_type == 'location' && experimentMode == 1) {
+      suggestions = currentMessage.suggested_location_name;
+    } else if (highlight_type == 'location' && experimentMode == 2) {
+      suggestions = currentMessage.actual_location_name;
+    } else if (highlight_type == 'url' && experimentMode == 1) {
+      suggestions = currentMessage.suggested_url;
+    } else if (highlight_type == 'url' && experimentMode == 2) {
+      suggestions = currentMessage.actual_url;
+    } else {
+      return;
+    }
+
+    for (var i in suggestions) {
+      var pii = suggestions[i];
+      if (token.indexOf(pii) > -1) {
+        var css_selector = '#' + TOKEN_INDEX_TAG + t;
+        $('#' + TOKEN_INDEX_TAG + t).addClass('guess-' + highlight_type);
+      } 
+    }
+  }
+
+  function updateMessageSuggestionHighlighting() {
+    console.log('updateMessageSuggestionHighlighting');
+
+    // Find token indexes
+    for (var t in message_tokens) {
+      // Check if PII is present
+      var token = message_tokens[t];
+      _suggestionHighlightHelper("pii", token, t);
+      _suggestionHighlightHelper("location", token, t);
+      _suggestionHighlightHelper("url", token, t);
+    }
+  }
+
+  function updateMessageHighlighting() {
+    console.log('updateMessageHighlighting');
+
+    // PII only
+    for (var t in message_tokens) {
+      $('#' + TOKEN_INDEX_TAG + t).removeClass('selected-pii');
+    }
+
+    for (var s in selections) {
+      var sel = selections[s];
+      var t = sel.idx;
+      $('#' + TOKEN_INDEX_TAG + t).addClass('selected-pii');
+    }
+  }
+  
+  function getIntroSurvey() {
+    // Capture user input
+    var radiolist = $('#introushahidiexperience input:radio');
+    var experience = "";
+    for (var idx=0; idx < radiolist.length; idx++) {
+      if (radiolist[idx].checked) {
+        experience = radiolist[idx].value;
+        break;
+      }
+    }
+    
+    var radiolist = $('#introenglish input:radio');
+    var english = "";
+    for (var idx=0; idx < radiolist.length; idx++) {
+      if (radiolist[idx].checked) {
+        english = radiolist[idx].value;
+        break;
+      }
+    }
+
+    var results = {
+      'email' : $('#introemail input').prop('value'),
+      'name' : $('#introname input').prop('value'),
+      'english' : english,
+      'experience' : experience,
+      'comments' : $('#introcomments textarea').prop('value')
+    };
+    return results;
+  }
+
+  function getExitSurvey() {
+    var taskNames = ['Pii', 'Location', 'Url', 'Category'];
+    var reviewNames = ['Tedious', 'Difficult', 'Experience', 'Precision'];
+    
+    var results = {};
+
+    for (var r in reviewNames) {
+      for (var t in taskNames) {
+        var itemName = 'exit' + reviewNames[r] + taskNames[t];
+        results[itemName] = _getRadioValue('#' + itemName);
+      }
+    }
+    
+    results['exitUI'] = $('textarea#exitUIInput').prop('value');
+    results['exitComments'] = $('textarea#exitCommentsInput').prop('value');
+    return results;
+  }
+
+  function _getRadioValue(css_selector) {
+    //- console.log(css_selector);
+    var checkedItem = $(css_selector + ' input[type=radio]:checked')[0];
+    if (checkedItem) {
+      return checkedItem.value;
+    } else {
+      return "";
+    }
+  }
+  
+  function _hideAllAndNextMessage() {
+    guider.hideAll();
+    nextMessage();
+  }
+
+  $(document).ready(function(){
+    // Assign a random experiment mode (0=regular, 1=dssg, 2=perfect)
+    experimentMode = Math.floor(Math.random()*3);
+    //- experimentMode = 0;
+        
+    // Start the experiment!
+    socket.emit('start_experiment', experimentMode);
+
+    if (experimentMode > 0) {
+      // Highlight words
+      $('body').addClass('enhanced');
+      $('.exitUnenhanced').hide();
+    } else {
+      // Don't show 'enhanced' exit survey questions which talk about highlighting
+      $('.exitEnhanced').hide();
+    }
+  
+    updateExperimentStage('intro_survey');
+
+    $("#startExperimentButton").click(function() {
+      // fetch email value and log it
+      //- var email_address = $('#emailinput').text();
+      var results = getIntroSurvey();
+      socket.emit('intro_survey', results);
+      startMessageAnnotation();
+    });
+
+    $('#endExperimentButton').click(function() {
+      // fetch email value and log it
+      //- var email_address = $('#emailinput').text();
+      var results = getExitSurvey()
+      socket.emit('exit_survey', results);
+      updateExperimentStage('thankyou_goodbye');
+    });
+
+    $("#nextMessageButton").click(function() {
+      if (SHOW_TUTORIAL && messageIdx == 0) {
+        text = "Great work! You're ready to begin."
+        text += "<br /><br />The experiment will run for 15 minutes. Please complete all 15 minutes in one sitting <i>without</i> leaving the experiment window (e.g. to follow links, look up a word, or take a break).";
+        text += "<br /><br />Don't worry if you don't completely understand all the words or the context for a message. Just give it your best attempt and move on."
+        text += "<br /><br />When you're ready to begin, press \"Begin\"!";
+        guider.createGuider({
+          buttons: [{name: "Begin", onclick: _hideAllAndNextMessage}],
+          description: text,
+          id: "f1",
+          //- next: "f2",
+          overlay: true,
+          title: "Congratulations!",
+          width: 400
+        }).show();
+      } else {
+        nextMessage();
+      } 
+    });
+
+    $("input.nexttask").click(function() {
+      nextTask();
+    });
+
+    // TODO: emit event for changing text in box
+    // TODO: emit event for changing focus out of window
+
+    $('body').mousemove(function(event){
+      var pos = {
+        x: event.pageX,
+        y: event.pageY
+      };
+      socket.emit('update_coords', pos);
+    });
+
+    //- $("body").keypress(function(e) {
+    //-   var code = e.keyCode || e.which;
+    //-   var keyTitle = String.fromCharCode(e.keyCode);
+    //-   //- console.log("Handler for .keypress() called. key code=", code, ", title=", keyTitle);
+
+    //-   //- socket.emit('keypress', key, where on page);
+    //- });
+
+    $(window).bind("beforeunload", 
+        function() { 
+            //- // Prevent user from accidentally exiting the experiment
+            //- return confirm("Are you sure?");
+            socket.emit('end_experiment', 'user exited window');  
+        }
+    );
+
+    $(window).blur(function(e) {
+      //- TODO: This gets called twice when user moves focus away from tab / window -- why?
+      //- console.log('user left the tab', e);
+      socket.emit('window_blur', messageIdx, currentMessage.id);
+    });
+    
+    $(window).focus(function(e) {
+      //- console.log('user returned to the tab', e);
+      socket.emit('window_focus', messageIdx, currentMessage.id);
+    });
+
+  });
+
+  // Uchaguzi test messages.
+  messages = [{
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Ufafa", 
+            "high",
+            "school"
+        ], 
+        "actual_pii": [
+           "@nmolanda", 
+           "Nick",
+           "Molanda",
+        ], 
+        "actual_url": ["http://www.nickmolanda.com"], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0,
+            "Polling Station Administration": 0.1, 
+            "Security Issues": 0.87342739034034110, 
+            "Staffing Issues": 0.061829469641850515,
+            "Voting Issues": 0.243996375407196
+        }, 
+        "id": "-1", 
+        "suggested_location_name": [
+            "voting",
+            "station",
+            "Ufafa", 
+            "high",
+            "school"
+        ], 
+        "suggested_pii": [
+            "Voters",
+            "@nmolanda", 
+            "Nick",
+            "Molanda",
+        ], 
+        "suggested_categories": {
+            "Counting + Results": 0,
+            "Polling Station Administration": 0.1, 
+            "Security Issues": 0.87342739034034110, 
+            "Staffing Issues": 0.061829469641850515,
+            "Voting Issues": 0.243996375407196
+        }, 
+        "suggested_url": ["http://www.nickmolanda.com"], 
+        "text": "Title: Emergency at voting station\nThere are rioters surrounding the polling station at Ufafa high school. Voters are scared to enter and cast their vote.\nSincerely,\nNick Molanda\n@nmolanda\nhttp://www.nickmolanda.com"
+    }, {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Roxas", 
+            "Elementary", 
+            "School"
+        ], 
+        "actual_pii": [
+            "Reyes", 
+            "032-2347543"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.17142077840697403, 
+            "Polling Station Administration": 0.8734273903403411, 
+            "Security Issues": 0.061829469641850515, 
+            "Staffing Issues": 0.12866671640253438, 
+            "Voting Issues": 0.243996375407196
+        }, 
+        "id": "216", 
+        "suggested_categories": {
+            "Counting + Results": 0.027480485106091971, 
+            "Polling Station Administration": 0.98528142049620282, 
+            "Security Issues": 8.1191701488538402e-05, 
+            "Staffing Issues": 6.8468129918889404e-05, 
+            "Voting Issues": 0.0042012671036980734
+        }, 
+        "suggested_location_name": [
+            "Roxas", 
+            "Call"
+        ], 
+        "suggested_pii": [
+            "PCOS", 
+            "Voting", 
+            "PCOS", 
+            "Clustered", 
+            "School", 
+            "Reyes", 
+            "4720A", 
+            "8:00", 
+            "032-2347543", 
+            "032-2347543"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Voting delay due to defective PCOS\nVoting was delayed when the PCOS (precinct count optical scan) machine at Clustered Precinct 4720A in Roxas Elementary School bogged down. \nAccording to a report, the first 20 voters have still not been able to feed their ballots into the machine by 8:00 in the morning -- already a full hour after voting was supposed to have begun. My name is Reyes. Call me at 032-2347543"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Sta", 
+            "Clara", 
+            "Batangas"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.24707666176003362, 
+            "Polling Station Administration": 0.04806886695564589, 
+            "Security Issues": 0.15620080789197735, 
+            "Staffing Issues": 0.1960417601703527, 
+            "Voting Issues": 0.7983318434866279
+        }, 
+        "id": "175", 
+        "suggested_categories": {
+            "Counting + Results": 0.057402261017825619, 
+            "Polling Station Administration": 0.47963835637085533, 
+            "Security Issues": 0.035936536259812878, 
+            "Staffing Issues": 0.001660678202312084, 
+            "Voting Issues": 0.3529896366451693
+        }, 
+        "suggested_location_name": [
+            "Sta", 
+            "Clara", 
+            "Batangas"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Daya", 
+            "Kontra", 
+            "Karahasan", 
+            "Kontra", 
+            "Daya", 
+            "Southern", 
+            "Tagalog"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Voter disenfranchisement\nSeventy percent of voters in Sta. Clara, Batangas have been unable to vote because of confusion in their clustered precincts, according to a report from the Kontra Daya party's regional chapter in Southern Tagalog."
+    }, 
+    {
+        "actual_categories": [
+            "Staffing Issues", 
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Precinct", 
+            "2791", 
+            "Sauyo", 
+            "district", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://feeds.feedburner.com/~ff/bulatlat?a=sCMqja0FVIY:5NprpQom620:qj6IDK7rITs"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.0749990030059201, 
+            "Polling Station Administration": 0.29896709776183655, 
+            "Security Issues": 0.7133669147351298, 
+            "Staffing Issues": 0.9858450727437734, 
+            "Voting Issues": 0.2580483111858873
+        }, 
+        "id": "246", 
+        "suggested_categories": {
+            "Counting + Results": 0.1189946389563072, 
+            "Polling Station Administration": 0.21025085799997625, 
+            "Security Issues": 0.071243293678074041, 
+            "Staffing Issues": 0.027924865635540683, 
+            "Voting Issues": 0.075176672884963727
+        }, 
+        "suggested_location_name": [
+            "Sauyo"
+        ], 
+        "suggested_pii": [
+            "PNP", 
+            "Personnel", 
+            "Quezon", 
+            "City", 
+            "2791", 
+            "a=sCMqja0FVIY:5NprpQom620", 
+            "qj6IDK7rITs"
+        ], 
+        "suggested_url": [
+            "http://feeds.feedburner.com/~ff/bulatlat?a=sCMqja0FVIY:5NprpQom620:qj6IDK7rITs"
+        ], 
+        "text": "Title: PNP Personnel Now Facilitating Voting\nIn Precinct 2791 in Sauyo district, Quezon City, the disorder caused by the voting process has transferred the facilitation of the voting to members of the PNP. Such transfer is in clear violation of pertinent election laws barring security forces from interfering in the conduct of elections.\nhttp://feeds.feedburner.com/~ff/bulatlat?a=sCMqja0FVIY:5NprpQom620:qj6IDK7rITs"
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Talipan", 
+            "Sulu"
+        ], 
+        "actual_pii": [
+            "034-1283928"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.18095718329045551, 
+            "Polling Station Administration": 0.08508546537201454, 
+            "Security Issues": 0.9024894541404868, 
+            "Staffing Issues": 0.11448179577573536, 
+            "Voting Issues": 0.1370493453174917
+        }, 
+        "id": "291", 
+        "suggested_categories": {
+            "Counting + Results": 0.092372704574042952, 
+            "Polling Station Administration": 0.45838607866079834, 
+            "Security Issues": 0.66586643789843347, 
+            "Staffing Issues": 0.11951355638253018, 
+            "Voting Issues": 0.17981895493584971
+        }, 
+        "suggested_location_name": [
+            "Talipan"
+        ], 
+        "suggested_pii": [
+            "Sulu", 
+            "034-1283928", 
+            "034-1283928"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Rumble\nRumble in Talipan, Sulu due to misconception. please help. 034-1283928"
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Abra"
+        ], 
+        "actual_pii": [
+            "http://twitter.com/rhkdtjddl"
+        ], 
+        "actual_url": [
+            "http://feeds.feedburner.com/~r/bulatlat/~4/sCMqja0FVIY"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2057584456423784, 
+            "Polling Station Administration": 0.03989344341366384, 
+            "Security Issues": 0.9303513441831971, 
+            "Staffing Issues": 0.19855389601570533, 
+            "Voting Issues": 0.29472397470335726
+        }, 
+        "id": "43", 
+        "suggested_categories": {
+            "Counting + Results": 0.047520366364731698, 
+            "Polling Station Administration": 0.47373674967439311, 
+            "Security Issues": 0.22881788031640857, 
+            "Staffing Issues": 0.059058394367377642, 
+            "Voting Issues": 0.28693004747651008
+        }, 
+        "suggested_location_name": [
+            "Abra"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Daya", 
+            "Abra", 
+            "1,200", 
+            "//feeds.feedburner.com/~r/bulatlat/~4/sCMqja0FVIY"
+        ], 
+        "suggested_url": [
+            "http://twitter.com/rhkdtjddl", 
+            "http://feeds.feedburner.com/~r/bulatlat/~4/sCMqja0FVIY"
+        ], 
+        "text": "Title: Tensions mar poll preparations\nKontra Daya field monitoring teams in the province of Abra reported various incidents of tension involving state security forces, alleged private armed groups, and even poll watchers. About 1,200 PNP officers have been deployed in Abra to ensure peace and order during the elections. I will also report to my Twitter account http://twitter.com/rhkdtjddl\nhttp://feeds.feedburner.com/~r/bulatlat/~4/sCMqja0FVIY"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Muntilupa"
+        ], 
+        "actual_pii": [
+            "Maricel", 
+            "Santos", 
+            "sotkfkd@hotmail.com"
+        ], 
+        "actual_url": [
+            "http://www.bulatlat.com/main/wp-content/uploads/2010/05/pasig_fts04.jpg"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2908164481214756, 
+            "Polling Station Administration": 0.7132781898593862, 
+            "Security Issues": 0.0012165432475222393, 
+            "Staffing Issues": 0.1839980461640127, 
+            "Voting Issues": 0.04019175811474016
+        }, 
+        "id": "73", 
+        "suggested_categories": {
+            "Counting + Results": 0.35561947958001894, 
+            "Polling Station Administration": 0.7192630091452451, 
+            "Security Issues": 0.034272933822716692, 
+            "Staffing Issues": 0.0038434241358112657, 
+            "Voting Issues": 0.034191256549815127
+        }, 
+        "suggested_location_name": [
+            "Muntinlupa"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Daya", 
+            "Maricel", 
+            "Santos", 
+            "sotkfkd@hotmail.com",
+            "//www.bulatlat.com/main/wp-content/uploads/2010/05/pasig_fts04.jpg"
+        ], 
+        "suggested_url": [
+            "http://www.bulatlat.com/main/wp-content/uploads/2010/05/pasig_fts04.jpg"
+        ], 
+        "text": "Title: Polling delayed precincts due to faulty machines\nKontra Daya field monitoring teams reported delayed polls due to faulty machines in several precincnts in Muntinlupa.  Some have reportedly resorted to manual voting. \n-- Maricel Santos / sotkfkd@hotmail.com\nhttp://www.bulatlat.com/main/wp-content/uploads/2010/05/pasig_fts04.jpg"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Bacoor", 
+            "Cavite"
+        ], 
+        "actual_pii": [
+            "sodlfma@hotmail.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2823006814187502, 
+            "Polling Station Administration": 0.8098436804981279, 
+            "Security Issues": 0.2694588733617565, 
+            "Staffing Issues": 0.09085816860872169, 
+            "Voting Issues": 0.0943091414869352
+        }, 
+        "id": "206", 
+        "suggested_categories": {
+            "Counting + Results": 0.33290914875830357, 
+            "Polling Station Administration": 0.78059642330180401, 
+            "Security Issues": 0.019429940743580173, 
+            "Staffing Issues": 0.0072959859634305069, 
+            "Voting Issues": 0.012765642497802605
+        }, 
+        "suggested_location_name": [
+            "Bacoor"
+        ], 
+        "suggested_pii": [
+            "PCOS", 
+            "Cavite", 
+            "1:47",
+            "sodlfma@hotmail.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: 2 PCOS machine not working\n2 PCOS (precinct count optical scan) machines in Bacoor, Cavite found to be not working as of 1:47 pm. Reach me at sodlfma@hotmail.com"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Matanog", 
+            "Maguindanao"
+        ], 
+        "actual_pii": [
+            "Michelle", 
+            "Reyes", 
+            "052-4312345"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.16469465520372165, 
+            "Polling Station Administration": 0.7194982528380551, 
+            "Security Issues": 0.17536386771057905, 
+            "Staffing Issues": 0.13080928728723668, 
+            "Voting Issues": 0.2532203692985706
+        }, 
+        "id": "95", 
+        "suggested_categories": {
+            "Counting + Results": 0.92664982958324871, 
+            "Polling Station Administration": 0.4765895137847595, 
+            "Security Issues": 0.0088885539993388482, 
+            "Staffing Issues": 0.024928084767987753, 
+            "Voting Issues": 0.0090616888450943678
+        }, 
+        "suggested_location_name": [
+            "Matanog", 
+            "Maguindanao"
+        ], 
+        "suggested_pii": [
+            "Machine", 
+            "Fails", 
+            "PCOS", 
+            "Machine", 
+            "BEI", 
+            "Smartmatic", 
+            "Michelle", 
+            "Reyes", 
+            "052-4312345", 
+            "052-4312345"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: PCOS Machine Fails\nA PCOS Machine (precinct count optical scan)  malfunctioned in Matanog, Maguindanao and the chairman and BEI did not call a technician right away. The Smartmatic representative who was attending seemed to be unable to fix the problem. I'm Michelle Reyes and you can reach me 052-4312345.\n "
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Basilan"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.04692567551622192, 
+            "Polling Station Administration": 0.12386106231445221, 
+            "Security Issues": 0.7110774607175887, 
+            "Staffing Issues": 0.06728969060581244, 
+            "Voting Issues": 0.14898104958496444
+        }, 
+        "id": "237", 
+        "suggested_categories": {
+            "Counting + Results": 0.12645707698726213, 
+            "Polling Station Administration": 0.51022943295959178, 
+            "Security Issues": 0.43276716634939544, 
+            "Staffing Issues": 0.068941682302455579, 
+            "Voting Issues": 0.10480780786304635
+        }, 
+        "suggested_location_name": [
+            "Lawless", 
+            "Basilan"
+        ], 
+        "suggested_pii": [], 
+        "suggested_url": [], 
+        "text": "Title: Election Violence\nI'm Jennifer Cruz. Lawless groups are now controlling all precincts in al-barka municipality in Basilan. Reach me: rmeo@yahoo.com"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Fairview", 
+            "Elmentary", 
+            "school"
+        ], 
+        "actual_pii": [
+            "Joshua", 
+            "Angelo", 
+            "Erica", 
+            "Bea"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.24539485932888955, 
+            "Polling Station Administration": 0.16004512069583163, 
+            "Security Issues": 0.25653772223208, 
+            "Staffing Issues": 0.19736728162773273, 
+            "Voting Issues": 0.7449064404914204
+        }, 
+        "id": "276", 
+        "suggested_categories": {
+            "Counting + Results": 0.031724394366607109, 
+            "Polling Station Administration": 0.17123356812620572, 
+            "Security Issues": 0.040918502952088105, 
+            "Staffing Issues": 0.061759821668768679, 
+            "Voting Issues": 0.41167670050119576
+        }, 
+        "suggested_location_name": [
+            "Fairview"
+        ], 
+        "suggested_pii": [
+            "Couple", 
+            "Fairview", 
+            "PPCRV", 
+            "Joshua", 
+            "Angelo", 
+            "Erica", 
+            "Bea", 
+            "Comelec", 
+            "Comelec", 
+            "Intramuros", 
+            "7:30am"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Couple lined up to vote since 7:30am in Fairview, only to be told their names are not in the masterlist\nAfter lining up for several hours at the Fairview Elmentary school, with the PPCRV having given them their cluster precinct number, the couple Joshua Angelo and Erica Bea found to their dismay that their names are not in the masterlist.  At about 5pm they are told instead by the Comelec representative to go to Comelec Intramuros."
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Sucat", 
+            "Paranaque"
+        ], 
+        "actual_pii": [
+            "Stephanie", 
+            "Cruz"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.17017064305893717, 
+            "Polling Station Administration": 0.18039136413409182, 
+            "Security Issues": 0.033874710568330864, 
+            "Staffing Issues": 0.11225244532442667, 
+            "Voting Issues": 0.9326538103218482
+        }, 
+        "id": "198", 
+        "suggested_categories": {
+            "Counting + Results": 0.037164593271638721, 
+            "Polling Station Administration": 0.0074152449205253006, 
+            "Security Issues": 0.056288323668045231, 
+            "Staffing Issues": 0.050396203086069964, 
+            "Voting Issues": 0.96206048158304769
+        }, 
+        "suggested_location_name": [
+            "Sucat"
+        ], 
+        "suggested_pii": [
+            "Stephanie", 
+            "Cruz", 
+            "Paranaque", 
+            "PPCRV", 
+            "Comelec", 
+            "soruxdpdlTdjwnj"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Missing voter's names\nI'm Stephanie Cruz. Many residents in Sucat, Paranaque reportedly could not find their names on printed master voters' lists. Some have sought the help of PPCRV volunteers and even tried accessing the Comelec website to no avail. reach: soruxdpdlTdjwnj@hotmail.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results"
+        ], 
+        "actual_location_name": [
+            "Barangka", 
+            "Elementary", 
+            "School", 
+            "Marikina"
+        ], 
+        "actual_pii": [
+            "Janice", 
+            "Bautista", 
+            "dltptkddgkskQnsdls@hotmail.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.7289817499553057, 
+            "Polling Station Administration": 0.24223492560742668, 
+            "Security Issues": 0.2843081772670472, 
+            "Staffing Issues": 0.04990912373797426, 
+            "Voting Issues": 0.12996945076544572
+        }, 
+        "id": "305", 
+        "suggested_categories": {
+            "Counting + Results": 0.067281937273373754, 
+            "Polling Station Administration": 0.7429207811155385, 
+            "Security Issues": 0.025970209808474587, 
+            "Staffing Issues": 0.045074753967278836, 
+            "Voting Issues": 0.04246158412157499
+        }, 
+        "suggested_location_name": [
+            "Barangka", 
+            "Marikina", 
+            "Report"
+        ], 
+        "suggested_pii": [
+            "BEI", 
+            "Board", 
+            "Election", 
+            "BEI", 
+            "Election", 
+            "Returns", 
+            "City", 
+            "Kontra", 
+            "Daya", 
+            "Janice", 
+            "Bautista", 
+            "dltptkddgkskQnsdls@hotmail.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Alleged BEI refused to post ER copy\nAn alleged Board of Election Inspector (BEI) refused to post a copy of Election Returns in an unidentified polling precint in Barangka Elementary School in the City of Marikina. Report was received by Kontra Daya nearly 5 hours after election poll was officially closed. this is Janice Bautista and you can reach me with dltptkddgkskQnsdls@hotmail.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results"
+        ], 
+        "actual_location_name": [
+            "Kiangan", 
+            "Ifugao"
+        ], 
+        "actual_pii": [
+            "Mary", 
+            "Ocampo"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.8242242495244904, 
+            "Polling Station Administration": 0.0824110175896731, 
+            "Security Issues": 0.18517583129224988, 
+            "Staffing Issues": 0.07364456284222654, 
+            "Voting Issues": 0.05353812321621758
+        }, 
+        "id": "313", 
+        "suggested_categories": {
+            "Counting + Results": 0.26833335152140209, 
+            "Polling Station Administration": 0.57413382102332122, 
+            "Security Issues": 0.31188897603216115, 
+            "Staffing Issues": 0.099033020356984025, 
+            "Voting Issues": 0.1080464497836149
+        }, 
+        "suggested_location_name": [
+            "Kiangan", 
+            "Transmission"
+        ], 
+        "suggested_pii": [
+            "Mary", 
+            "Ocampo", 
+            "Ifugao"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Postponed Canvassing\nI'm Mary Ocampo. Canvassing of results was postponed at 1 am today  in Kiangan, Ifugao due to technical difficulties. Transmission is set at 5 pm."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "BF", 
+            "Homes", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [
+            "joshua.marker@gmail.com"
+        ], 
+        "actual_url": [
+            "http://www.twitter.com/tkfkatkffu"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.03584475129923313, 
+            "Polling Station Administration": 0.7494813419738896, 
+            "Security Issues": 0.1946174493648681, 
+            "Staffing Issues": 0.13672045760431148, 
+            "Voting Issues": 0.24631670230844907
+        }, 
+        "id": "85", 
+        "suggested_categories": {
+            "Counting + Results": 0.0040882529270448668, 
+            "Polling Station Administration": 0.78682193434982284, 
+            "Security Issues": 0.014418848004855661, 
+            "Staffing Issues": 0.00071142477298103139, 
+            "Voting Issues": 0.083546645250932958
+        }, 
+        "suggested_location_name": [], 
+        "suggested_pii": [
+            "Quezon", 
+            "City", 
+            "1,092", 
+            "9:50", 
+            "1092", 
+            "9:50",
+            "joshua.marker@gmail.com"
+        ], 
+        "suggested_url": [
+            "http://www.twitter.com/tkfkatkffu"
+        ], 
+        "text": "Title: only 39 out of 1,092 voters done as of 9:50 AM\nIn BF Homes, Quezon City, one voter complained that it takes one and a half hour to vote, from lining up to get a number up to actual voting. The precinct has 1092 voters yet  No. 39 just finished voting at 9:50 am. Reach me via joshua.marker@gmail.com\nhttp://www.twitter.com/tkfkatkffu\n"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Davao", 
+            "Pampanga"
+        ], 
+        "actual_pii": [
+            "Michael", 
+            "Flores", 
+            "dhwlrrmeoaksdmf@hotmail.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2332534168126198, 
+            "Polling Station Administration": 0.10427137686624509, 
+            "Security Issues": 0.1304131646983303, 
+            "Staffing Issues": 0.14404001706730427, 
+            "Voting Issues": 0.7015025724728045
+        }, 
+        "id": "40", 
+        "suggested_categories": {
+            "Counting + Results": 0.014394974012796047, 
+            "Polling Station Administration": 0.95153380413552335, 
+            "Security Issues": 0.058453842625969935, 
+            "Staffing Issues": 0.0067767090719678316, 
+            "Voting Issues": 0.93813524580751795
+        }, 
+        "suggested_location_name": [
+            "Davao", 
+            "Pampanga", 
+            "Bian"
+        ], 
+        "suggested_pii": [
+            "Michael", 
+            "Flores", 
+            "dhwlrrmeoaksdmf@hotmail.com", 
+            "Kontra", 
+            "Daya", 
+            "Speaker", 
+            "Prospero", 
+            "Nograles", 
+            "Joji", 
+            "P100", 
+            "P200", 
+            "Davao", 
+            "Nograles", 
+            "Davao", 
+            "City", 
+            "2010", 
+            "P100", 
+            "P200"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: reports of vote-buying\nPosted on 06 May 2010 by Michael Flores (dhwlrrmeoaksdmf@hotmail.com\n). Reports reaching the Kontra Daya hotline point to alleged vote-buying incidents in Davao, Pampanga. Speaker Prospero Nograles and Joji Ilagan-Bian are giving away P100 to residents, and even P200 for widows according to one of the reports. Bian is running for a congressional seat for Davao City\u2019s Second District, while Nograles is running for the mayoral post of Davao City. "
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Gusing", 
+            "Sur", 
+            "La", 
+            "Union"
+        ], 
+        "actual_pii": [
+            "Jocelyn", 
+            "Garcia", 
+            "jgarcia@gmail.com", 
+            "#thesmallbikeman", 
+            "thesmallbikeman.wordpress.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2137719602368912, 
+            "Polling Station Administration": 0.7958269713281602, 
+            "Security Issues": 0.023977509726063762, 
+            "Staffing Issues": 0.09949716679064864, 
+            "Voting Issues": 0.1344167778003048
+        }, 
+        "id": "131", 
+        "suggested_categories": {
+            "Counting + Results": 0.0030174119600129869, 
+            "Polling Station Administration": 0.53634542421171005, 
+            "Security Issues": 0.085441581806828981, 
+            "Staffing Issues": 0.0033075016826656029, 
+            "Voting Issues": 0.047493697388879291
+        }, 
+        "suggested_location_name": [], 
+        "suggested_pii": [
+            "La", 
+            "Union", 
+            "Jocelyn", 
+            "Garcia", 
+            "8:15",
+            "jgarcia@gmail.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Voting process very slow\nIn Gusing Sur, La Union, at 8:15 am, only 5 voters are in the room.  Two voters are entering the polling precinct at a time. At this pace, only 144 voters can vote until 6pm.\n\nJocelyn Garcia    \njgarcia@gmail.com\nTwitter: #thesmallbikeman\nFollow my blog at: thesmallbikeman.wordpress.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Cagayan"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1748546901901782, 
+            "Polling Station Administration": 0.2608636636192208, 
+            "Security Issues": 0.20200596502455387, 
+            "Staffing Issues": 0.1171760825528652, 
+            "Voting Issues": 0.7724224725432414
+        }, 
+        "id": "233", 
+        "suggested_categories": {
+            "Counting + Results": 0.014232934570055178, 
+            "Polling Station Administration": 0.27143433758495605, 
+            "Security Issues": 0.03708070093183613, 
+            "Staffing Issues": 0.012480079955680443, 
+            "Voting Issues": 0.71565717447827626
+        }, 
+        "suggested_location_name": [
+            "Cagayan"
+        ], 
+        "suggested_pii": [], 
+        "suggested_url": [], 
+        "text": "Title: Several voters not included in masterlist\nAccording to reports, many registered voters in Cagayan were not able to cast votes because their names were not included in the masterlist."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Bagumbayan", 
+            "Elementary", 
+            "School", 
+            "3rd", 
+            "District", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.bulatlat.com/main/wp-content/uploads/2010/05/delayedtestingsealing_cembo04.jpg", 
+            "http://feeds.feedburner.com/~ff/bulatlat?i=aKTxnPEbbkA:oIZEhpM65nA:V_sGLiPBpWU"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.15760615466297706, 
+            "Polling Station Administration": 0.8560329082964238, 
+            "Security Issues": 0.18063146062168478, 
+            "Staffing Issues": 0.27316014529397925, 
+            "Voting Issues": 0.01883208714345629
+        }, 
+        "id": "72", 
+        "suggested_categories": {
+            "Counting + Results": 0.11050593645925974, 
+            "Polling Station Administration": 0.81268272849438661, 
+            "Security Issues": 0.00055001255378156044, 
+            "Staffing Issues": 0.00027447049678604434, 
+            "Voting Issues": 0.0054880610384270461
+        }, 
+        "suggested_location_name": [
+            "Quezon", 
+            "City", 
+            "Bagumbayan", 
+            "District"
+        ], 
+        "suggested_pii": [
+            "Voting", 
+            "PCOS", 
+            "Quezon", 
+            "City", 
+            "Machine", 
+            "9:10am", 
+            "//www.bulatlat.com/main/wp-content/uploads/2010/05/delayedtestingsealing_cembo04.jpg", 
+            "oIZEhpM65nA"
+        ], 
+        "suggested_url": [
+            "http://www.bulatlat.com/main/wp-content/uploads/2010/05/delayedtestingsealing_cembo04.jpg", 
+            "http://feeds.feedburner.com/~ff/bulatlat?i=aKTxnPEbbkA:oIZEhpM65nA:V_sGLiPBpWU"
+        ], 
+        "text": "Title: Voting delayed\nVoting was delayed in a school in Quezon City Reports of a malfunctioning PCOS machine in Bagumbayan Elementary School, 3rd District, Quezon City delayed voting for 2 hours. Machine did not appear to have a memory card. The problem was resovled only at 9:10am.\nhttp://www.bulatlat.com/main/wp-content/uploads/2010/05/delayedtestingsealing_cembo04.jpg\nhttp://feeds.feedburner.com/~ff/bulatlat?i=aKTxnPEbbkA:oIZEhpM65nA:V_sGLiPBpWU"
+    }, 
+    {
+        "actual_categories": [
+            "Staffing Issues"
+        ], 
+        "actual_location_name": [
+            "Cebu"
+        ], 
+        "actual_pii": [
+            "Noel", 
+            "Mercado", 
+            "nmercado@gmail.com", 
+            "@nmercado0601", 
+            "nmercado0601.wordpress.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1468158349565293, 
+            "Polling Station Administration": 0.12033896402067071, 
+            "Security Issues": 0.12613060744395663, 
+            "Staffing Issues": 0.8384323788389303, 
+            "Voting Issues": 0.17548051480031873
+        }, 
+        "id": "62", 
+        "suggested_categories": {
+            "Counting + Results": 0.9414023734534408, 
+            "Polling Station Administration": 0.21293176729147317, 
+            "Security Issues": 0.0061381179726344576, 
+            "Staffing Issues": 0.58216090986764335, 
+            "Voting Issues": 0.006331048959090568
+        }, 
+        "suggested_location_name": [
+            "Cebu"
+        ], 
+        "suggested_pii": [
+            "BEI", 
+            "Delayed", 
+            "Testing", 
+            "BEI", 
+            "Board", 
+            "Election", 
+            "Inspectors", 
+            "Cebu", 
+            "Election", 
+            "Monitoring", 
+            "Volunteers", 
+            "Board", 
+            "Election", 
+            "Inspectors", 
+            "BEI", 
+            "BEI", 
+            "BEI", 
+            "Noel", 
+            "Mercado", 
+            "nmercado0601", 
+            "Blog", 
+            "nmercado0601", 
+            "nmercado0601.wordpress.com", 
+            "@nmercado0601",
+            "nmercado@gmail.com", 
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Lack of Training for BEI's, Delayed Testing and Sealing\nRecent tests in Cebu show that the BEI's (Board of Election Inspectors) are really ill-prepared for the May 10 elections. The common problems that Cebu Election Monitoring Volunteers witnessed was the lack of training of the Board of Election Inspectors. Some teachers said that only the \"1st BEI\" and \"2nd BEI\" were trained. The BEI members were so dependent on the technicians. There is only 1 technician for one voting center/school with 10 to 21 clustered precincts.\nNoel Mercado\nnmercado@gmail.com\nTwitter: @nmercado0601\nBlog: nmercado0601.wordpress.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results", 
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Dr", 
+            "Juan", 
+            "Nolasco", 
+            "High", 
+            "School", 
+            "Pritil", 
+            "Tondo"
+        ], 
+        "actual_pii": [
+            "@wjsrhkdtjd"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.861600114526943, 
+            "Polling Station Administration": 0.7497389321596623, 
+            "Security Issues": 0.13240404523607624, 
+            "Staffing Issues": 0.1469687276372809, 
+            "Voting Issues": 0.29060345956828276
+        }, 
+        "id": "56", 
+        "suggested_categories": {
+            "Counting + Results": 0.82915330980166546, 
+            "Polling Station Administration": 0.28376081781316626, 
+            "Security Issues": 0.01099484940863193, 
+            "Staffing Issues": 0.028112328563065715, 
+            "Voting Issues": 0.042927280380679701
+        }, 
+        "suggested_location_name": [
+            "Pritil"
+        ], 
+        "suggested_pii": [
+            "PCOS", 
+            "Posted", 
+            "Kontra", 
+            "Daya", 
+            "PCOS", 
+            "Nolasco", 
+            "High", 
+            "School", 
+            "Tondo", 
+            "Twitter", 
+            "2010", 
+            "@wjsrhkdtjd"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Defective PCOS machines\nPosted on 05 May 2010. Reports reaching Kontra Daya say that all PCOS machines brought to the Dr. Juan Nolasco High School in Pritil, Tondo for final testing and sealing are defective.\nfollows Twitter: @wjsrhkdtjd\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration", 
+            "Voting Issues", 
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Ramon", 
+            "Magsaysay", 
+            "Elementary", 
+            "School", 
+            "Sampaloc", 
+            "Manila"
+        ], 
+        "actual_pii": [
+            "Irene", 
+            "Andrada", 
+            "013-2242565"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.12455210796534981, 
+            "Polling Station Administration": 0.7008491280047111, 
+            "Security Issues": 0.8606255353948639, 
+            "Staffing Issues": 0.010595348936349346, 
+            "Voting Issues": 0.7151718825466289
+        }, 
+        "id": "159", 
+        "suggested_categories": {
+            "Counting + Results": 0.15207836349034731, 
+            "Polling Station Administration": 0.64674165809147321, 
+            "Security Issues": 0.62424421218846982, 
+            "Staffing Issues": 0.0019960111764097473, 
+            "Voting Issues": 0.024742881909405948
+        }, 
+        "suggested_location_name": [
+            "Sampaloc"
+        ], 
+        "suggested_pii": [
+            "Manila", 
+            "Roberto", 
+            "Rosales", 
+            "Miranda", 
+            "US", 
+            "Army", 
+            "Ramon", 
+            "Magsaysay", 
+            "Elementary", 
+            "School", 
+            "Manila", 
+            "Board", 
+            "of", 
+            "Elections", 
+            "Inspectors", 
+            "Irene", 
+            "Andrada", 
+            "013-2242565", 
+            "013-2242565"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: military and police seen to enter polling precincts\nManila Police District Director C/Supt. Roberto Rosales and Miranda, accompanied by elements of the military and police, as well as members of the US Army were seen entering polling precincts inside Ramon Magsaysay Elementary School in Sampaloc, Manila, allegedly to confirm reports of vote buying in the area. Despite this, their presence was still illegal under the election code, which prohibits anyone from entering polling precincts, with the exception of the members of the Board of Elections Inspectors. I'm Irene Andrada, call me 013-2242565 for more info"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Purok", 
+            "Isla", 
+            "Brgy", 
+            "Villamonte", 
+            "Bacolod", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.youtube.com/watch?v=4RExn3kMFQU"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.027823021602657514, 
+            "Polling Station Administration": 0.1362234991046459, 
+            "Security Issues": 0.29780641972912614, 
+            "Staffing Issues": 0.032626923788090734, 
+            "Voting Issues": 0.8455166052415214
+        }, 
+        "id": "133", 
+        "suggested_categories": {
+            "Counting + Results": 0.059189711571149876, 
+            "Polling Station Administration": 0.71412881599137568, 
+            "Security Issues": 0.060038430414530879, 
+            "Staffing Issues": 0.010949063060142613, 
+            "Voting Issues": 0.3563482532442972
+        }, 
+        "suggested_location_name": [
+            "Purok", 
+            "Isla", 
+            "Villamonte", 
+            "Bacolod", 
+            "City"
+        ], 
+        "suggested_pii": [
+            "Massive", 
+            "Brgy", 
+            "v=4RExn3kMFQU"
+        ], 
+        "suggested_url": [
+            "http://www.youtube.com/watch?v=4RExn3kMFQU"
+        ], 
+        "text": "Title: Massive vote buying reported \nMassive vote buying in Purok Isla, Brgy. Villamonte in Bacolod City was text reported.  It was allegedly easy to pinpoint the exact location as many people from surrounding puroks were going to and from a house in the said place.\nhttp://www.youtube.com/watch?v=4RExn3kMFQU\n"
+    }, 
+    {
+        "actual_categories": [
+            "Staffing Issues"
+        ], 
+        "actual_location_name": [
+            "Tasig", 
+            "Elementary", 
+            "School", 
+            "Gattaran", 
+            "Cagayan"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1375920851425153, 
+            "Polling Station Administration": 0.15033365545267668, 
+            "Security Issues": 0.13412624078220725, 
+            "Staffing Issues": 0.8309532443611356, 
+            "Voting Issues": 0.2178645601699983
+        }, 
+        "id": "243", 
+        "suggested_categories": {
+            "Counting + Results": 0.13191915220613723, 
+            "Polling Station Administration": 0.52497011490112322, 
+            "Security Issues": 0.045865655668750518, 
+            "Staffing Issues": 0.019994004078606686, 
+            "Voting Issues": 0.0068832967252411663
+        }, 
+        "suggested_location_name": [
+            "Tasig", 
+            "Gattaran", 
+            "Amulong", 
+            "West"
+        ], 
+        "suggested_pii": [
+            "BEI", 
+            "Cagayan", 
+            "3-member"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Non-BEIs assisting in voting process\nAn additional teacher besides the 3-member BEI was found assisting in the voting precinct in Tasig Elementary School, Gattaran, Cagayan.  In Amulong West, barangay officials are  also inside the voting precinct."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Ugong", 
+            "Norte", 
+            "Makati", 
+            "City"
+        ], 
+        "actual_pii": [
+            "Mary Ann Torres", 
+            "081-3546868", 
+            "glarudnsskfdp@gmail.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.26938246068819566, 
+            "Polling Station Administration": 0.8269931808003221, 
+            "Security Issues": 0.1948587354712126, 
+            "Staffing Issues": 0.20936110420133017, 
+            "Voting Issues": 0.27286217925710055
+        }, 
+        "id": "183", 
+        "suggested_categories": {
+            "Counting + Results": 0.056185832630472735, 
+            "Polling Station Administration": 0.23777701470800033, 
+            "Security Issues": 0.044344445607330654, 
+            "Staffing Issues": 0.06329867741676741, 
+            "Voting Issues": 0.020175188489260344
+        }, 
+        "suggested_location_name": [
+            "Makati", 
+            "City"
+        ], 
+        "suggested_pii": [
+            "glarudnsskfdp@gmail.com",
+            "PPCRV", 
+            "Parish", 
+            "Pastoral", 
+            "Council", 
+            "Responsible", 
+            "Ronald", 
+            "Vera", 
+            "Liberal", 
+            "Party", 
+            "Noynoy", 
+            "Aquino", 
+            "Clustered", 
+            "Ugong", 
+            "Norte", 
+            "Mary", 
+            "Ann", 
+            "Torres", 
+            "3990A", 
+            "081-3546868", 
+            "081-3546868"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: PPCRV volunteer wears campaign pin\nPPCRV (Parish Pastoral Council for Responsible Voting) volunteer Ronald de Vera was reportedly seen wearing a campaign pin of Liberal Party presidential candidate Noynoy Aquino inside Clustered Precinct 3990A at Ugong Norte in Makati City. -- Mary Ann Torres (081-3546868, glarudnsskfdp@gmail.com)\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results", 
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Davao", 
+            "Pampanga"
+        ], 
+        "actual_pii": [
+            "http://www.twitter.com/tmdhkglffl"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.7460882024607984, 
+            "Polling Station Administration": 0.8857336000343402, 
+            "Security Issues": 0.20610598369444524, 
+            "Staffing Issues": 0.07120273707001329, 
+            "Voting Issues": 0.19278006681353382
+        }, 
+        "id": "219", 
+        "suggested_categories": {
+            "Counting + Results": 0.0053664795396385677, 
+            "Polling Station Administration": 0.82126743625745902, 
+            "Security Issues": 0.0067177243656377349, 
+            "Staffing Issues": 0.0027699244456323479, 
+            "Voting Issues": 0.065838964089384042
+        }, 
+        "suggested_location_name": [
+            "Genuino", 
+            "Los", 
+            "Banos", 
+            "Davao", 
+            "Pampanga", 
+            "Follow"
+        ], 
+        "suggested_pii": [
+            "PCOS", 
+            "Genuino", 
+            "PCOS"
+        ], 
+        "suggested_url": [
+            "http://www.twitter.com/tmdhkglffl"
+        ], 
+        "text": "Title: Genuino watchers intimidate voters\nPollwatchers of Genuino, the mayoralty candidate of Los Banos, are illegally poring over voters' ballots before they are fed to the PCOS machine in Davao, Pampanga. They are instructing voters--specially those whom the Genuino camp bought--to have their thumb point to the candidate's name in the ballot before feeding it to the PCOS unit to confirm that they voted for him.\nFollow: http://www.twitter.com/tmdhkglffl\n"
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Bacoor", 
+            "Cavite"
+        ], 
+        "actual_pii": [
+            "Marlon", 
+            "Navarro", 
+            "glarudnsskfdp@gmail.com", 
+            "032-1239285"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.17655856886949836, 
+            "Polling Station Administration": 0.14368288597070303, 
+            "Security Issues": 0.9422766583778914, 
+            "Staffing Issues": 0.24882695815361125, 
+            "Voting Issues": 0.2887067540651869
+        }, 
+        "id": "208", 
+        "suggested_categories": {
+            "Counting + Results": 0.015123746253736681, 
+            "Polling Station Administration": 0.20261204191644494, 
+            "Security Issues": 0.79398094917704187, 
+            "Staffing Issues": 0.042197192337956456, 
+            "Voting Issues": 0.19069198374554527
+        }, 
+        "suggested_location_name": [
+            "Bacoor", 
+            "Cavite"
+        ], 
+        "suggested_pii": [
+            "Lani", 
+            "Revilla", 
+            "Del", 
+            "Abaya", 
+            "Marlon", 
+            "Navarro", 
+            "032-1239285", 
+            "032-1239285",
+            "glarudnsskfdp@gmail.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: One dead after shooting\nTwo men in civilian clothes were left dead after shooting happened in front of a police station in Bacoor, Cavite. Bystanders point to congressional contenders Lani Revilla and Del Abaya as the possible parties involved in this biggest known violence in this town in this year\u2019s election. -- Marlon Navarro, glarudnsskfdp@gmail.com, 032-1239285\n \n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Caraga"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.bbc.co.uk/news/world-asia-23628652"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.13060700487616952, 
+            "Polling Station Administration": 0.9154727137594922, 
+            "Security Issues": 0.26660444830889984, 
+            "Staffing Issues": 0.2576536735442441, 
+            "Voting Issues": 0.013870765858693035
+        }, 
+        "id": "74", 
+        "suggested_categories": {
+            "Counting + Results": 0.13702359752713419, 
+            "Polling Station Administration": 0.55395837791477875, 
+            "Security Issues": 0.13303952309814873, 
+            "Staffing Issues": 0.037367671927778255, 
+            "Voting Issues": 0.31534700710291869
+        }, 
+        "suggested_location_name": [
+            "Caraga"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Daya", 
+            "//www.bbc.co.uk/news/world-asia-23628652"
+        ], 
+        "suggested_url": [
+            "http://www.bbc.co.uk/news/world-asia-23628652"
+        ], 
+        "text": "Title: No secrecy folder\nReports reaching Kontra Daya say that there is no secrecy folder for all the clustered precints in Caraga\nhttp://www.bbc.co.uk/news/world-asia-23628652\n\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results"
+        ], 
+        "actual_location_name": [
+            "Dipolog", 
+            "City", 
+            "Zamboanga", 
+            "del", 
+            "Norte"
+        ], 
+        "actual_pii": [
+            "Grace", 
+            "Tomas"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.973929593452709, 
+            "Polling Station Administration": 0.28871367820859695, 
+            "Security Issues": 0.294395807720826, 
+            "Staffing Issues": 0.23005156066345783, 
+            "Voting Issues": 0.08564571923606107
+        }, 
+        "id": "306", 
+        "suggested_categories": {
+            "Counting + Results": 0.44624849018414264, 
+            "Polling Station Administration": 0.77510733692382205, 
+            "Security Issues": 0.03161987128819798, 
+            "Staffing Issues": 0.0055583307470394574, 
+            "Voting Issues": 0.011225744839179519
+        }, 
+        "suggested_location_name": [
+            "Dipolog", 
+            "City", 
+            "Norte"
+        ], 
+        "suggested_pii": [
+            "Slow", 
+            "Grace", 
+            "Tomas", 
+            "Kontra", 
+            "Daya"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Slow transmission of poll results reported\nThis is Grace Tomas. Some precints in Dipolog City Zamboanga del Norte is encountering slow transmission of poll results. According to reports received by Kontra Daya only 42 out of 83 clustered precints had transmit their poll results as of this moment."
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results", 
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Lamut", 
+            "Ifugao"
+        ], 
+        "actual_pii": [
+            "Catherine", 
+            "Mendoza", 
+            "thdusdk@aol.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.9010003949940041, 
+            "Polling Station Administration": 0.8785398291066362, 
+            "Security Issues": 0.27587390270870144, 
+            "Staffing Issues": 0.0423820593081067, 
+            "Voting Issues": 0.057591996310330025
+        }, 
+        "id": "280", 
+        "suggested_categories": {
+            "Counting + Results": 0.42280750470718148, 
+            "Polling Station Administration": 0.47961130158366921, 
+            "Security Issues": 0.054344234371797431, 
+            "Staffing Issues": 0.014018578931910962, 
+            "Voting Issues": 0.095783197145035442
+        }, 
+        "suggested_location_name": [
+            "Lamut", 
+            "Ifugao"
+        ], 
+        "suggested_pii": [
+            "TRANSMISSION", 
+            "OF", 
+            "VOTES", 
+            "Kontra", 
+            "Daya", 
+            "Catherine", 
+            "Mendoza",
+            "thdusdk@aol.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: FAILURE OF TRANSMISSION OF VOTES\nAccording to report received by Kontra Daya. A failure in transmission of poll results occured in many clustered precints in Lamut, Ifugao. I am Catherine Mendoza, reach me at thdusdk@aol.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Barangay", 
+            "Balao", 
+            "Abra", 
+            "de", 
+            "Ilog", 
+            "Mindoro", 
+            "Occidental"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.reuters.com/article/2013/08/09/us-usa-russia-talks-idUSBRE9780Q520130809"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.10496060591014655, 
+            "Polling Station Administration": 0.7583968946935528, 
+            "Security Issues": 0.062310799925640786, 
+            "Staffing Issues": 0.023923703115002137, 
+            "Voting Issues": 0.028800278941638613
+        }, 
+        "id": "220", 
+        "suggested_categories": {
+            "Counting + Results": 0.03236684008691959, 
+            "Polling Station Administration": 0.81628713195762881, 
+            "Security Issues": 0.022166605427550098, 
+            "Staffing Issues": 0.013050284833563774, 
+            "Voting Issues": 0.13632649491133619
+        }, 
+        "suggested_location_name": [
+            "Barangay", 
+            "Balao", 
+            "Ilog", 
+            "Mindoro"
+        ], 
+        "suggested_pii": [
+            "Katribu", 
+            "Katribu", 
+            "Leaders", 
+            "Katribu", 
+            "Partylist", 
+            "Abra", 
+            "Occidental", 
+            "Katribu", 
+            "Katribu", 
+            "//www.reuters.com/article/2013/08/09/us-usa-russia-talks-idUSBRE9780Q520130809"
+        ], 
+        "suggested_url": [
+            "http://www.reuters.com/article/2013/08/09/us-usa-russia-talks-idUSBRE9780Q520130809"
+        ], 
+        "text": "Title: Katribu worried over pre-shaded Katribu votes\nLeaders of Katribu Partylist revealed that ballots given voters in Barangay Balao, Abra de Ilog in Mindoro Occidental had the Katribu ovals pre-shaded. This has prohibited many to properly vote for Katribu.\nhttp://www.reuters.com/article/2013/08/09/us-usa-russia-talks-idUSBRE9780Q520130809\n\n"
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results"
+        ], 
+        "actual_location_name": [
+            "Lamut", 
+            "Ifugao"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.999909411315256, 
+            "Polling Station Administration": 0.1391279917877301, 
+            "Security Issues": 0.22311073411571677, 
+            "Staffing Issues": 0.26626018649832217, 
+            "Voting Issues": 0.2085710380092348
+        }, 
+        "id": "281", 
+        "suggested_categories": {
+            "Counting + Results": 0.93203471791972348, 
+            "Polling Station Administration": 0.19327049757708775, 
+            "Security Issues": 0.032603501570697337, 
+            "Staffing Issues": 0.06046056146239983, 
+            "Voting Issues": 0.04556360558225029
+        }, 
+        "suggested_location_name": [
+            "Lamut", 
+            "Ifugao"
+        ], 
+        "suggested_pii": [], 
+        "suggested_url": [], 
+        "text": "Title: Results transmission fails in many clusters\nThe transmission of election results failed in many clusters in Lamut, Ifugao. Only four precincts were able to transmit results."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Bagong", 
+            "Lote", 
+            "Malabon", 
+            "Metro", 
+            "Manila"
+        ], 
+        "actual_pii": [
+            "Mary", 
+            "Ann", 
+            "Torres", 
+            "sjakwjEjskaus@aol.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1567363829668041, 
+            "Polling Station Administration": 0.8992219971346366, 
+            "Security Issues": 0.166655961890161, 
+            "Staffing Issues": 0.12704603846584775, 
+            "Voting Issues": 0.0797669483666061
+        }, 
+        "id": "239", 
+        "suggested_categories": {
+            "Counting + Results": 0.11786935869381356, 
+            "Polling Station Administration": 0.92349432144262777, 
+            "Security Issues": 0.0082250930266336876, 
+            "Staffing Issues": 0.0061455381706745412, 
+            "Voting Issues": 0.008735030027348701
+        }, 
+        "suggested_location_name": [
+            "Bagong", 
+            "Lote", 
+            "Malabon"
+        ], 
+        "suggested_pii": [
+            "Slow", 
+            "PCOS", 
+            "Metro", 
+            "Manila", 
+            "PCOS", 
+            "Mary", 
+            "Ann", 
+            "Torres",
+            "sjakwjEjskaus@aol.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Slow, dysfunctional PCOS machines\nIn precincts 226 and 227 in Bagong Lote, Malabon, Metro Manila, the PCOS machines are slow and prone to malfunctioning. People are reportedly frustrated and angry-- some have been leaving without having cast their votes. -- Best,\nMary Ann Torres\nsjakwjEjskaus@aol.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Technological", 
+            "University", 
+            "Philippines", 
+            "TUP", 
+            "Taguig"
+        ], 
+        "actual_pii": [
+            "Michael", 
+            "Flores"
+        ], 
+        "actual_url": [
+            "http://www.bloomberg.com/news/2013-08-09/u-s-warns-on-pakistan-travel-pulls-lahore-diplomats.html"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.10929766397758005, 
+            "Polling Station Administration": 0.18813866751137576, 
+            "Security Issues": 0.06287812834354821, 
+            "Staffing Issues": 0.18818002890668348, 
+            "Voting Issues": 0.8829318972121101
+        }, 
+        "id": "247", 
+        "suggested_categories": {
+            "Counting + Results": 0.048099956713950634, 
+            "Polling Station Administration": 0.41373376357609021, 
+            "Security Issues": 0.10242247025800122, 
+            "Staffing Issues": 0.010330533463764295, 
+            "Voting Issues": 0.11146446337113394
+        }, 
+        "suggested_location_name": [
+            "Taguig"
+        ], 
+        "suggested_pii": [
+            "Technological", 
+            "University", 
+            "Philippines", 
+            "TUP", 
+            "Michael", 
+            "Flores", 
+            "0991A", 
+            "//www.bloomberg.com/news/2013-08-09/u-s-warns-on-pakistan-travel-pulls-lahore-diplomats.html"
+        ], 
+        "suggested_url": [
+            "http://www.bloomberg.com/news/2013-08-09/u-s-warns-on-pakistan-travel-pulls-lahore-diplomats.html"
+        ], 
+        "text": "Title: Tensions rise\nPrecinct 0991A located at the Technological University of the Philippines (TUP) in Taguig is now filled to the rafters and an outbreak of chaos is being feared. Many voters have chosen in fact to leave the precinct premises without being able to vote while a number have collapsed already.\nhttp://www.bloomberg.com/news/2013-08-09/u-s-warns-on-pakistan-travel-pulls-lahore-diplomats.html\n\n-- Michael Flores\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Tabuanlasa", 
+            "Basilan"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.26247862811798445, 
+            "Polling Station Administration": 0.8956789922708438, 
+            "Security Issues": 0.021051801977178285, 
+            "Staffing Issues": 0.2614012348922666, 
+            "Voting Issues": 0.1270554269785866
+        }, 
+        "id": "144", 
+        "suggested_categories": {
+            "Counting + Results": 0.0025267330997948102, 
+            "Polling Station Administration": 0.95330233952366883, 
+            "Security Issues": 0.066366776377316417, 
+            "Staffing Issues": 0.012083346088015956, 
+            "Voting Issues": 0.018749068796069419
+        }, 
+        "suggested_location_name": [
+            "Verified", 
+            "Tabuanlasa"
+        ], 
+        "suggested_pii": [
+            "Ballots", 
+            "Election", 
+            "Basilan", 
+            "Junaid", 
+            "Muktar", 
+            "2010"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Ballots shaded prior to Election Day\n(May 10, 2010) - Verified reports states that in Tabuanlasa, Basilan, election is almost completed. Since last night, incumbent mayor Junaid Muktar, was reported to have shaded his ballot already. Watchers witnessed themselves that ballots have already been shaded last night."
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Davao", 
+            "Pampanga", 
+            "Bunawan", 
+            "Davao", 
+            "City", 
+            "Mabalacat", 
+            "Pampanga", 
+            "Fontana", 
+            "Resort", 
+            "Clark", 
+            "Field"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.usatoday.com/story/news/nation/2013/08/08/us-lahore-pakistan-evacuation/2634337/"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.026706685477242198, 
+            "Polling Station Administration": 0.07640942564656317, 
+            "Security Issues": 0.13706212883629906, 
+            "Staffing Issues": 0.0165749393731456, 
+            "Voting Issues": 0.9278198514736147
+        }, 
+        "id": "41", 
+        "suggested_categories": {
+            "Counting + Results": 0.0044438856165125691, 
+            "Polling Station Administration": 0.97783220163638462, 
+            "Security Issues": 0.048189564612110436, 
+            "Staffing Issues": 0.0010190843035163019, 
+            "Voting Issues": 0.90199342670643046
+        }, 
+        "suggested_location_name": [
+            "Davao", 
+            "Pampanga", 
+            "Bunawan", 
+            "Bian", 
+            "Mabalacat", 
+            "Pampanga"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Daya", 
+            "Speaker", 
+            "Prospero", 
+            "Nograles", 
+            "Joji", 
+            "P100", 
+            "P200", 
+            "Davao", 
+            "City", 
+            "Davao", 
+            "Nograles", 
+            "Davao", 
+            "City", 
+            "Mayor", 
+            "Boking", 
+            "Morales", 
+            "Fontana", 
+            "Resort", 
+            "Clark", 
+            "Field", 
+            "2010", 
+            "P100", 
+            "P200", 
+            "//www.usatoday.com/story/news/nation/2013/08/08/us-lahore-pakistan-evacuation/2634337/"
+        ], 
+        "suggested_url": [
+            "http://www.usatoday.com/story/news/nation/2013/08/08/us-lahore-pakistan-evacuation/2634337/"
+        ], 
+        "text": "Title: reports of vote-buying\nPosted on 06 May 2010 Reports reaching the Kontra Daya hotline point to alleged vote-buying incidents in Davao and Pampanga. Speaker Prospero Nograles and Joji Ilagan-Bian are giving away P100 to residents, and even P200 for widows in Bunawan, Davao City, according to one of the reports. Bian is running for a congressional seat for Davao City\u2019s Second District, while Nograles is running for the mayoral post of Davao City. In a similar development, after a caravan in Mabalacat, Pampanga, Mayor Boking Morales was reported to be distributing money to residents who lined up at the Fontana Resort at Clark Field.\nhttp://www.usatoday.com/story/news/nation/2013/08/08/us-lahore-pakistan-evacuation/2634337/\n\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Almanza", 
+            "Uno", 
+            "Las", 
+            "Pinas"
+        ], 
+        "actual_pii": [
+            "094-4732124"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.18865246195222315, 
+            "Polling Station Administration": 0.9085207185760171, 
+            "Security Issues": 0.15195208825034903, 
+            "Staffing Issues": 0.08474538058045714, 
+            "Voting Issues": 0.15225888470121393
+        }, 
+        "id": "238", 
+        "suggested_categories": {
+            "Counting + Results": 0.038348030136988752, 
+            "Polling Station Administration": 0.89533002954347318, 
+            "Security Issues": 0.069420487148912607, 
+            "Staffing Issues": 0.025085406928591649, 
+            "Voting Issues": 0.028565937229104714
+        }, 
+        "suggested_location_name": [
+            "Las", 
+            "Pinas"
+        ], 
+        "suggested_pii": [
+            "Clustered", 
+            "Almanza", 
+            "Uno", 
+            "094-4732124", 
+            "595,", 
+            "Almanza", 
+            "Uno,", 
+            "in", 
+            "Las", 
+            "Pinas.", 
+            "It", 
+            "was", 
+            "not", 
+            "indicated", 
+            "which", 
+            "candidates", 
+            "favored", 
+            "the", 
+            "pre-shading.", 
+            "Reach", 
+            "me", 
+            "with", 
+            "094-4732"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Pre-shaded ballot found\nA pre-shaded ballot was seen at Clustered Precinct 595, Almanza Uno, in Las Pinas. It was not indicated which candidates favored the pre-shading. Reach me with 094-4732124 for more.\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Rodriquez", 
+            "Rizal"
+        ], 
+        "actual_pii": [
+            "Ronald", 
+            "Villanueva", 
+            "qhrhtlvek@aol.com"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.07908661902969909, 
+            "Polling Station Administration": 0.8024577610544396, 
+            "Security Issues": 0.21796391817270389, 
+            "Staffing Issues": 0.1324937059868103, 
+            "Voting Issues": 0.14477895924297676
+        }, 
+        "id": "138", 
+        "suggested_categories": {
+            "Counting + Results": 0.18789439299667623, 
+            "Polling Station Administration": 0.91848636890091484, 
+            "Security Issues": 0.028475025203607542, 
+            "Staffing Issues": 0.020027620500294833, 
+            "Voting Issues": 0.014411425006471034
+        }, 
+        "suggested_location_name": [
+            "Rodriquez"
+        ], 
+        "suggested_pii": [
+            "PCOS", 
+            "Ronald", 
+            "Villanueva",
+            "qhrhtlvek@aol.com"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: PCOS machine not working\nIn precinct 151 C and 151 G in Rodriquez, Rizal the PCOS machine is not working. -- Ronald Villanueva, qhrhtlvek@aol.com"
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Malinaw", 
+            "Aklan"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.thestate.com/2013/08/08/2908849/us-orders-most-officials-out-of.html"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1340296734570184, 
+            "Polling Station Administration": 0.14397341180730483, 
+            "Security Issues": 0.9068916101898411, 
+            "Staffing Issues": 0.1431024281394206, 
+            "Voting Issues": 0.21595430679697905
+        }, 
+        "id": "61", 
+        "suggested_categories": {
+            "Counting + Results": 0.053942707442614007, 
+            "Polling Station Administration": 0.085802893086062607, 
+            "Security Issues": 0.45704788322080492, 
+            "Staffing Issues": 0.031961911029977773, 
+            "Voting Issues": 0.17817171898772224
+        }, 
+        "suggested_location_name": [
+            "Igoy", 
+            "Malinaw"
+        ], 
+        "suggested_pii": [
+            "Kontra", 
+            "Wilbert", 
+            "National", 
+            "Union", 
+            "Peoples", 
+            "Lawyers", 
+            "Panay", 
+            "Aklan", 
+            "//www.thestate.com/2013/08/08/2908849/us-orders-most-officials-out-of.html"
+        ], 
+        "suggested_url": [
+            "http://www.thestate.com/2013/08/08/2908849/us-orders-most-officials-out-of.html"
+        ], 
+        "text": "Title: Ambush: one dead two wounded\nReport from Kontra Daya- Panay: Atty. Wilbert Igoy, president of the National Union of Peoples Lawyers Panay chapter and mayoralty bet in Malinaw, Aklan survives an ambush attempt. His bodyguard however was killed. Two barangay captains were also wounded. Additional details to follow.\nhttp://www.thestate.com/2013/08/08/2908849/us-orders-most-officials-out-of.html\n\n"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Silang", 
+            "Cavite"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.24032909211980144, 
+            "Polling Station Administration": 0.2380619581829966, 
+            "Security Issues": 0.2894177837735182, 
+            "Staffing Issues": 0.12157706449376976, 
+            "Voting Issues": 0.9977048234993462
+        }, 
+        "id": "145", 
+        "suggested_categories": {
+            "Counting + Results": 0.028436086744486378, 
+            "Polling Station Administration": 0.65186182936056014, 
+            "Security Issues": 0.13760767959317488, 
+            "Staffing Issues": 0.012175007777918629, 
+            "Voting Issues": 0.60346097040806368
+        }, 
+        "suggested_location_name": [
+            "Silang"
+        ], 
+        "suggested_pii": [
+            "Unverified", 
+            "Cavite", 
+            "Php200", 
+            "Php200"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Reports of vote buying\nUnverified reports of vote buying in Silang, Cavite included rounding up 300 people and being paid Php200 per person."
+    }, 
+    {
+        "actual_categories": [
+            "Security Issues"
+        ], 
+        "actual_location_name": [
+            "Lanao", 
+            "del", 
+            "Sur"
+        ], 
+        "actual_pii": [
+            "Irene", 
+            "Andrada", 
+            "013-2242565"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.21619668058508357, 
+            "Polling Station Administration": 0.2541859583561474, 
+            "Security Issues": 0.9509370914984654, 
+            "Staffing Issues": 0.019646594514401483, 
+            "Voting Issues": 0.004895345699278564
+        }, 
+        "id": "188", 
+        "suggested_categories": {
+            "Counting + Results": 0.065066545978070517, 
+            "Polling Station Administration": 0.27609249569195782, 
+            "Security Issues": 0.38470387441974585, 
+            "Staffing Issues": 0.067620101706707403, 
+            "Voting Issues": 0.27100512033825103
+        }, 
+        "suggested_location_name": [
+            "Lanao"
+        ], 
+        "suggested_pii": [
+            "Irene", 
+            "Andrada", 
+            "013-2242565", 
+            "013-2242565"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Gunfight\nA three hour gunfight transpired between political clans in Lanao del Sur. My name is Irene Andrada, and phone number is 013-2242565."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Toclong", 
+            "Elementary", 
+            "School"
+        ], 
+        "actual_pii": [
+            "081-3546868"
+        ], 
+        "actual_url": [
+            "http://tribune.com.pk/story/588625/terrot-threat-us-orders-non-essential-staff-out-of-lahore-consulate/"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.09829971861419891, 
+            "Polling Station Administration": 0.9221326367479613, 
+            "Security Issues": 0.18309188643243018, 
+            "Staffing Issues": 0.09662916602314, 
+            "Voting Issues": 0.08469661386104096
+        }, 
+        "id": "254", 
+        "suggested_categories": {
+            "Counting + Results": 0.0016081452448266976, 
+            "Polling Station Administration": 0.78717658368496934, 
+            "Security Issues": 0.010730582555767414, 
+            "Staffing Issues": 0.0020300198907276493, 
+            "Voting Issues": 0.15119727017274553
+        }, 
+        "suggested_location_name": [], 
+        "suggested_pii": [
+            "Comlelec", 
+            "Comelec", 
+            "Toclong", 
+            "Elementary", 
+            "School", 
+            "533A", 
+            "533B", 
+            "081-3546868", 
+            "//tribune.com.pk/story/588625/terrot-threat-us-orders-non-essential-staff-out-of-lahore-consulate/", 
+            "534", 
+            "at", 
+            "Toclong", 
+            "Elementary", 
+            "School.", 
+            "Call", 
+            "081-3546"
+        ], 
+        "suggested_url": [
+            "http://tribune.com.pk/story/588625/terrot-threat-us-orders-non-essential-staff-out-of-lahore-consulate/"
+        ], 
+        "text": "Title: Flying voters, deceased still included in Comlelec voters' list\nAside from alleged flying voters, many deceased are still included in the Comelec voters' list based on the listed voters in Precinct 533A, 533B and 534 at Toclong Elementary School. Call 081-3546868 for more info. http://tribune.com.pk/story/588625/terrot-threat-us-orders-non-essential-staff-out-of-lahore-consulate/\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Holy", 
+            "Spirit", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.055909668447481194, 
+            "Polling Station Administration": 0.7286359687658546, 
+            "Security Issues": 0.2371718216325309, 
+            "Staffing Issues": 0.050559117587782, 
+            "Voting Issues": 0.28072072428461675
+        }, 
+        "id": "231", 
+        "suggested_categories": {
+            "Counting + Results": 0.035742304954054012, 
+            "Polling Station Administration": 0.17871713418642349, 
+            "Security Issues": 0.015695012711018638, 
+            "Staffing Issues": 0.002773621264780222, 
+            "Voting Issues": 0.24239489697928365
+        }, 
+        "suggested_location_name": [
+            "Holy", 
+            "Spirit"
+        ], 
+        "suggested_pii": [
+            "Voters", 
+            "Quezon", 
+            "City"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Someone Else Voted for Voters\nIn Precinct 256 in Holy Spirit, Quezon City, voters complained that others had voted in their names and persons, thus disqualifying them to vote."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Quirino", 
+            "Proj", 
+            "4", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.06596290149546202, 
+            "Polling Station Administration": 0.9853431167192505, 
+            "Security Issues": 0.05751816757663218, 
+            "Staffing Issues": 0.2234738075894622, 
+            "Voting Issues": 0.17156833555671575
+        }, 
+        "id": "257", 
+        "suggested_categories": {
+            "Counting + Results": 0.027946900544960566, 
+            "Polling Station Administration": 0.9545115630853076, 
+            "Security Issues": 0.00035847905535580759, 
+            "Staffing Issues": 0.00051874646596793248, 
+            "Voting Issues": 0.010543207315820823
+        }, 
+        "suggested_location_name": [
+            "Proj"
+        ], 
+        "suggested_pii": [
+            "Clustered", 
+            "Quirino", 
+            "Quezon", 
+            "City", 
+            "PCOS", 
+            "BEI", 
+            "7:45"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Voting delay and other woes\nVoting started late at 7:45 am at Clustered Precinct 2A, Quirino, Proj. 4, Quezon City due to the PCOS machine backup memory problem. Additionally, instead of voters, the BEI started feeding ballots to the machine. In the specified precinct, only five voters were allowed to vote at a time."
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results", 
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Capul", 
+            "Northern", 
+            "Samar"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.youtube.com/watch?v=d4c95Oqz_tg"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.8317938042765443, 
+            "Polling Station Administration": 0.9608775733264616, 
+            "Security Issues": 0.004814434183714611, 
+            "Staffing Issues": 0.2924582782489505, 
+            "Voting Issues": 0.060398182286346774
+        }, 
+        "id": "312", 
+        "suggested_categories": {
+            "Counting + Results": 0.61263160725345411, 
+            "Polling Station Administration": 0.63576128600529913, 
+            "Security Issues": 0.19462816385187653, 
+            "Staffing Issues": 0.049934951955697582, 
+            "Voting Issues": 0.048941250876816854
+        }, 
+        "suggested_location_name": [
+            "Capul", 
+            "Northern"
+        ], 
+        "suggested_pii": [
+            "v=d4c95Oqz_tg"
+        ], 
+        "suggested_url": [
+            "http://www.youtube.com/watch?v=d4c95Oqz_tg"
+        ], 
+        "text": "Title: 3 precincts fail to transmit results\nThree precincts in Capul, Northern Samar have not yet transmitted results because of lack of signal.\nhttp://www.youtube.com/watch?v=d4c95Oqz_tg\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Gawaran", 
+            "Elem", 
+            "School", 
+            "Bacoor", 
+            "Cavite"
+        ], 
+        "actual_pii": [
+            "Joel", 
+            "Rivera"
+        ], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.25439522241362017, 
+            "Polling Station Administration": 0.8568457952126205, 
+            "Security Issues": 0.24294407344774493, 
+            "Staffing Issues": 0.17227232200827977, 
+            "Voting Issues": 0.22921251156353023
+        }, 
+        "id": "143", 
+        "suggested_categories": {
+            "Counting + Results": 0.01223299020667094, 
+            "Polling Station Administration": 0.47116863743072435, 
+            "Security Issues": 0.051937846592681525, 
+            "Staffing Issues": 0.0073683222142406132, 
+            "Voting Issues": 0.03360337767729444
+        }, 
+        "suggested_location_name": [
+            "Bacoor", 
+            "Cavite"
+        ], 
+        "suggested_pii": [
+            "Joel", 
+            "Rivera", 
+            "Gawaran", 
+            "Elem", 
+            "School"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Numbering system slows down voting process\nHi I am Joel Rivera. At Precinct 137 B, Gawaran Elem School, Bacoor, Cavite voting is chaotic and slow. Voters blamed the numbering system. "
+    }, 
+    {
+        "actual_categories": [
+            "Counting + Results"
+        ], 
+        "actual_location_name": [
+            "Lakandula", 
+            "High", 
+            "School", 
+            "Gagalangin", 
+            "Tondo", 
+            "Manila"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.youtube.com/watch?v=0LkJdR35D_M"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.9864239048263413, 
+            "Polling Station Administration": 0.014296209046916874, 
+            "Security Issues": 0.2076848355939777, 
+            "Staffing Issues": 0.09800947279537771, 
+            "Voting Issues": 0.015041414729991764
+        }, 
+        "id": "283", 
+        "suggested_categories": {
+            "Counting + Results": 0.8764513239131505, 
+            "Polling Station Administration": 0.24498784743524957, 
+            "Security Issues": 0.040072138138954237, 
+            "Staffing Issues": 0.079663070322036414, 
+            "Voting Issues": 0.055034433487797942
+        }, 
+        "suggested_location_name": [
+            "Gagalangin"
+        ], 
+        "suggested_pii": [
+            "Lakandula", 
+            "High", 
+            "School", 
+            "Tondo", 
+            "Manila", 
+            "Smartmatic", 
+            "9:24", 
+            "v=0LkJdR35D_M"
+        ], 
+        "suggested_url": [
+            "http://www.youtube.com/watch?v=0LkJdR35D_M"
+        ], 
+        "text": "Title: Transmission yet to take place\nTransmission of election results has yet to take place at the Lakandula High School in Gagalangin, Tondo, Manila as of 9:24 pm. They are still waiting for the Smartmatic technician to bring the transmitter.\nhttp://www.youtube.com/watch?v=0LkJdR35D_M\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Quirino", 
+            "High", 
+            "School", 
+            "Proj", 
+            "3", 
+            "Quezon", 
+            "City"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.1695537672176207, 
+            "Polling Station Administration": 0.8191084719998266, 
+            "Security Issues": 0.18034765192499305, 
+            "Staffing Issues": 0.25792090580278365, 
+            "Voting Issues": 0.05142904841761518
+        }, 
+        "id": "100", 
+        "suggested_categories": {
+            "Counting + Results": 0.024773912127012004, 
+            "Polling Station Administration": 0.86668601892734365, 
+            "Security Issues": 0.025202141735816034, 
+            "Staffing Issues": 0.0049100134756366719, 
+            "Voting Issues": 0.020505638820173821
+        }, 
+        "suggested_location_name": [
+            "Clustered", 
+            "Proj"
+        ], 
+        "suggested_pii": [
+            "Slow", 
+            "Quirino", 
+            "High", 
+            "School", 
+            "Quezon", 
+            "City", 
+            "11:45"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Slow voting\nIn Clustered Precinct 885 at the Quirino High School in Proj. 3, Quezon City, as of 11:45 am, only 100 voters have been able to vote since 7 am."
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Bangkal", 
+            "Elementary", 
+            "School", 
+            "Makati"
+        ], 
+        "actual_pii": [
+            "Richard", 
+            "Salazar", 
+            "rufghsgownj@aol.com"
+        ], 
+        "actual_url": [
+            "http://www.latimes.com/news/world/worldnow/la-fg-wn-us-pakistan-lahore-consulate-20130809", 
+            "0", 
+            "4787439.story"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.04732071187514425, 
+            "Polling Station Administration": 0.9593449496002557, 
+            "Security Issues": 0.29995138979914204, 
+            "Staffing Issues": 0.18181652156112116, 
+            "Voting Issues": 0.009341619289468849
+        }, 
+        "id": "176", 
+        "suggested_categories": {
+            "Counting + Results": 0.0095345488883355391, 
+            "Polling Station Administration": 0.98102786548815535, 
+            "Security Issues": 0.0089307555011621, 
+            "Staffing Issues": 0.0013149211290010368, 
+            "Voting Issues": 0.1642676814067919
+        }, 
+        "suggested_location_name": [
+            "Bangkal"
+        ], 
+        "suggested_pii": [
+            "Makati", 
+            "Richard", 
+            "Salazar", 
+            "7:00", 
+            "//www.latimes.com/news/world/worldnow/la-fg-wn-us-pakistan-lahore-consulate-20130809,0,4787439.story",
+            "rufghsgownj@aol.com"
+        ], 
+        "suggested_url": [
+            "http://www.latimes.com/news/world/worldnow/la-fg-wn-us-pakistan-lahore-consulate-20130809,0,4787439.story"
+        ], 
+        "text": "Title: Voting starts late\nPoll watchers in a precinct in Bangkal Elementary School, Makati, were ushered to vote thirty minutes past 7:00 am, the official start of today's elections. According to a reporting voter, long voters' lines have accumulated outside the clustered precincts by that time.\nhttp://www.latimes.com/news/world/worldnow/la-fg-wn-us-pakistan-lahore-consulate-20130809,0,4787439.story\n-- Richard Salazar, rufghsgownj@aol.com\n"
+    }, 
+    {
+        "actual_categories": [
+            "Polling Station Administration"
+        ], 
+        "actual_location_name": [
+            "Occidental", 
+            "Mindoro"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [
+            "http://www.twitter.com/enqjsajrjd"
+        ], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.2762946982756956, 
+            "Polling Station Administration": 0.8048067005460122, 
+            "Security Issues": 0.11922439956495856, 
+            "Staffing Issues": 0.15333547623187996, 
+            "Voting Issues": 0.1733668369373106
+        }, 
+        "id": "171", 
+        "suggested_categories": {
+            "Counting + Results": 0.044040463086692586, 
+            "Polling Station Administration": 0.97711386449068993, 
+            "Security Issues": 0.01960375709184476, 
+            "Staffing Issues": 0.050363578055740502, 
+            "Voting Issues": 0.11481485163710144
+        }, 
+        "suggested_location_name": [], 
+        "suggested_pii": [
+            "Occidental", 
+            "Mindoro", 
+            "BEIs"
+        ], 
+        "suggested_url": [
+            "http://www.twitter.com/enqjsajrjd"
+        ], 
+        "text": "Title: Pre-shaded ballots for partylist found\nAn unverified report of pre-shaded ballots for still unknown partylist was found in Occidental Mindoro yet BEIs are doing nothing.\nhttp://www.twitter.com/enqjsajrjd\n"
+    }, 
+    {
+        "actual_categories": [
+            "Voting Issues"
+        ], 
+        "actual_location_name": [
+            "Tandang", 
+            "Sora", 
+            "Elementary", 
+            "School"
+        ], 
+        "actual_pii": [], 
+        "actual_url": [], 
+        "faked_suggested_categories": {
+            "Counting + Results": 0.10430906577331632, 
+            "Polling Station Administration": 0.2596690210210026, 
+            "Security Issues": 0.21194683195086178, 
+            "Staffing Issues": 0.043652692267241965, 
+            "Voting Issues": 0.8829564819893592
+        }, 
+        "id": "180", 
+        "suggested_categories": {
+            "Counting + Results": 0.011359883982715341, 
+            "Polling Station Administration": 0.072234559283975222, 
+            "Security Issues": 0.03555955057256651, 
+            "Staffing Issues": 0.014295132626476312, 
+            "Voting Issues": 0.806378331579374
+        }, 
+        "suggested_location_name": [], 
+        "suggested_pii": [
+            "Tandang", 
+            "Sora", 
+            "Elementary", 
+            "School"
+        ], 
+        "suggested_url": [], 
+        "text": "Title: Missing names\nA voter reported that many voters' names, including his, do not appear on lists in Tandang Sora Elementary School."
+    }];

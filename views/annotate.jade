@@ -1,0 +1,166 @@
+#annotate_messages.inactiveStage  
+  .label
+    | Message:
+  #message
+    p#messageHolder()
+
+    
+  hr
+  
+  #pii.task.enabled
+    .label
+      | 1) Private / sensitive information
+      span.key
+    .instructions
+      | Click to highlight each word in the message that should be kept private (besides URLs). Then click "Done".
+    .done
+      input.nexttask(type='submit', value='Done')
+    p#highlightsHolder Fake text not yet highlighted
+    .floatfix
+  #location.task
+    .label
+      | 2) Location
+      span.key
+    .instructions
+      | Type or copy-paste the location into the box. Then click "Done".
+    input#locationinput(type='text', name='location', size='50')
+    .floatfix
+    .done
+      input.nexttask(type='submit', value='Done')
+    .floatfix
+
+  #url.task
+    .label
+      | 3) URL(s)
+      span.key
+    .instructions
+      | Type or copy-paste any URL(s) into the box, one per line. Then click "Done".
+    textarea#urlinput(name='url', cols='75', rows='4')
+    .floatfix
+    .done
+      input.nexttask(type='submit', value='Done')
+    .floatfix
+
+  #category.task
+    .label
+      | 4) Category(ies)
+    .instructions
+      | Select the checkbox for one or more categories that describe the message well. Then click "Done".
+
+    table
+
+      //- // TODO: Can loop over categories? Not sure since its compile time rather than runtime...
+      
+      //- //This works
+      //- - var arr = ['PositiveEvents','CountingResults','PollingStationAdministration'];
+      //- - for (var i = 0; i < arr.length; ++i) {
+      //-   li= arr[i]
+      //- - }
+
+      //- - var categories = [''];
+      //- - for (var i = 0; i <3; ++i) {
+      //-   tr
+      //-     td
+      //-       input.categorycheckbox(type='checkbox', name='option-PositiveEvents', id='option-PositiveEvents', value='PositiveEvents')
+      //-       | Positive Events
+      //-     td
+      //-       #confidencebar-PositiveEvents.confidencebar
+      //-         .confidencebar-level
+      //-           .confidencebar-inside
+      //- - }
+      
+      //- tr
+      //-   td
+      //-     input.categorycheckbox(type='checkbox', name='option-PositiveEvents', id='option-PositiveEvents', value='PositiveEvents')
+      //-     | Positive Events
+      //-   td
+      //-     #confidencebar-PositiveEvents.confidencebar
+      //-       .confidencebar-level
+      //-         .confidencebar-inside
+      tr
+        td
+          input.categorycheckbox(type='checkbox', name='option-CountingResults', id='option-CountingResults', value='CountingResults')
+          | <b>Counting + Results</b>
+        td
+          #confidencebar-CountingResults.confidencebar
+            .confidencebar-level
+              .confidencebar-inside
+        td
+          <i>(post-voting counting problems, contested results)</i>
+      tr
+        td
+          input.categorycheckbox(type='checkbox', name='option-PollingStationAdministration', id='option-PollingStationAdministration', value='PollingStationAdministration')
+          | <b>Polling Station Administration</b>
+        td
+          #confidencebar-PollingStationAdministration.confidencebar
+            .confidencebar-level
+              .confidencebar-inside
+        td
+          <i>(slow voting, voting machine problems)</i>
+      tr
+        td
+          input.categorycheckbox(type='checkbox', name='option-SecurityIssues', id='option-SecurityIssues', value='SecurityIssues')
+          | <b>Security Issues</b>
+        td
+          #confidencebar-SecurityIssues.confidencebar
+            .confidencebar-level
+              .confidencebar-inside
+        td
+          <i>(violence, threats)</i>
+      tr
+        td
+          input.categorycheckbox(type='checkbox', name='option-StaffingIssues', id='option-StaffingIssues', value='StaffingIssues')
+          | <b>Staffing Issues</b>
+        td
+          #confidencebar-StaffingIssues.confidencebar
+            .confidencebar-level
+              .confidencebar-inside
+        td
+          <i>(polling station staff missing / insufficient / incompetent)</i>
+      tr
+        td
+          input.categorycheckbox(type='checkbox', name='option-VotingIssues', id='option-VotingIssues', value='VotingIssues')
+          | <b>Voting Issues</b>
+        td
+          #confidencebar-VotingIssues.confidencebar
+            .confidencebar-level
+              .confidencebar-inside
+        td
+          <i>(voter ID, fraud, buying, or interruptions)</i>
+        
+      //- tr
+      //-   td
+      //-     input.categorycheckbox(type='checkbox', name='option-food', id='option-food', value='Food')
+      //-     | Food
+      //-   td
+      //-     #confidencebar-Food.confidencebar
+      //-       .confidencebar-level
+      //-         .confidencebar-inside
+      //- tr
+      //-   td
+      //-     input.categorycheckbox(type='checkbox', name='option-water', id='option-water', value='Water')
+      //-     | Water
+      //-   td
+      //-     #confidencebar-Water.confidencebar
+      //-       .confidencebar-level
+      //-         .confidencebar-inside
+      //- tr
+      //-   td
+      //-     input.categorycheckbox(type='checkbox', name='option-clowns', id='option-clowns', value='Clowns')
+      //-     | Clowns
+      //-   td
+      //-     #confidencebar-Clowns.confidencebar
+      //-       .confidencebar-level
+      //-         .confidencebar-inside
+      //- tr
+      //-   td
+      //-     input.categorycheckbox(type='checkbox', name='option-death', id='option-death', value='Death')
+      //-     | Death
+      //-   td
+      //-     #confidencebar-Death.confidencebar
+      //-       .confidencebar-level
+      //-         .confidencebar-inside
+    .floatfix
+    .done
+      input.done#nextMessageButton(type='submit', value='Done')
+    .floatfix

@@ -1,0 +1,40 @@
+head
+  title Election Crisis Experiment
+  link(rel='stylesheet', href='/stylesheets/style.css')
+  link(rel='stylesheet', href='/stylesheets/experiment.css')
+  link(rel='stylesheet', href='/stylesheets/guiders.css')
+  script(src='/socket.io/socket.io.js')
+  script(src='/javascripts/jquery.js')
+  script(src='/javascripts/guiders.js')
+  //- jquery.min.js
+
+  script
+    var name = 'User' + Math.round(Math.random() * 255);
+    var r = Math.round(Math.random() * 255);
+    var g = Math.round(Math.random() * 255);
+    var b = Math.round(Math.random() * 255);
+    var cl = 'rgb('+r+','+g+','+b+')';
+
+    if(name == '') name = 'Anonymous';
+    var pl = 
+    {
+      id: 0,
+      name: name,
+      color: cl,
+      x: 0,
+      y: 0
+    };
+     
+    console.log('path=', window.location.pathname)
+    var socket = io.connect('');
+     
+    socket.on('connect', function () {
+      socket.emit('client_connected', pl);
+      
+      // Update google forms to include session ID, so we can link it to users stats from experiment
+      //- var socket_id = socket.socket.sessionid;
+      //- var intro_survey_url = 'https://docs.google.com/forms/d/1Q-FvMyy5maAmLl1blaIHp0QtHqzJOhEw88VMXYn7KQg/viewform?embedded=true&entry_1444619261=' + socket_id;
+      //- var exit_survey_url = 'https://docs.google.com/forms/d/16P8SQSsNpKUgdrwWgOMjcsp02_mC1i60RlzH22muEFg/viewform?embedded=true&entry_1689691129=' + socket_id;
+      //- $('#introSurveyFrame').attr('src', intro_survey_url);
+      //- $('#exitSurveyFrame').attr('src', exit_survey_url);
+    });

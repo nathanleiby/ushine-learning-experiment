@@ -1,0 +1,96 @@
+#exit_survey.inactiveStage
+
+    .surveyUpper
+
+      h1 Short Survey
+      
+      p <b>Thank you</b> for participating in the study! Please take a quick moment to share your feedback on a few short questions. 
+
+      hr
+
+      #explainSurvey.exitEnhanced
+        p <b>What are we studying?</b> Our goal is to evaluate impact on speed, accuracy, and frustration when people see computer-generated suggestions to help them process a message (highlights and category ratings, which may or may not be correct).
+        table
+          tr
+            td <i><b>WITHOUT computer suggestions:</b></i>
+            td <i><b>WITH computer suggestions:</b></i>
+          tr
+            td 
+              img(src="img/explain-unenhanced.png", width="350")
+            td
+              img(src="img/explain-suggestions.png", width="350")
+        
+        
+        hr
+
+      - var taskNames = {'Pii' : "...for finding sensitive information?", 'Location' : "...for finding the location?" , 'Url' : "...for finding URLs (links)?", 'Category' : "...for choosing categories?"}
+      - var questions = {}
+      - questions["exitTedious"] = {'choices': ["Very tedious", "Somewhat tedious", "Not tedious"], 'question' : '1) How tedious did you find each task?', 'enhanced' : false}
+      - questions["exitDifficult"] = {'choices': ["Very hard", "Hard", "Neutral", "Easy", "Very Easy"], 'question' : '2) How difficult did you find each task?', 'enhanced' : false}
+      - questions["exitPrecision"] = {'choices': ["(Almost) none", "Less than half", "Half", "More than half", "(Almost) all"], 'question' : '3) How much of computer\'s suggestions did you feel were right?', 'enhanced' : true}
+      - questions["exitExperience"] = {'choices': ["Much worse", "Worse", "No effect", "Better", "Much better"], 'question' : '4) Overall, how did the computer\'s suggestions affect your experience?', 'enhanced' : true}
+      
+      each choices, questionName in questions
+        - var enhancedClass = ""
+        - if (choices['enhanced']) { enhancedClass = "exitEnhanced"}
+        p
+        div(id="#{questionName}", class="#{enhancedClass}")
+          .label
+            | #{choices['question']}
+          .instructions_show
+            | 
+          br
+          table
+            - var isBlue = true
+            - var columnStyle = ""
+            each desc, task in taskNames
+              - isBlue = !isBlue
+              - if (isBlue) { columnStyle="background: lightblue" } else { columnStyle = ""}
+
+              tr(id="#{questionName}#{task}")
+                
+                td(style="#{columnStyle}")
+                  | #{desc}
+                
+                - var i = 1
+                each c in choices['choices']
+                  td(style="#{columnStyle}")
+                    input(type="radio", name="#{questionName}#{task}Group", value="#{i}")
+                    | #{c}
+
+                  - i += 1
+
+          br
+          hr
+      
+        
+      //- [ENHANCED ONLY]
+      //- 5) UI question (existing text)
+
+      p
+      #exitUI.exitEnhanced
+        .label
+          | 5) User interface
+        .instructions_show
+          |   Did you like the way the computer's suggestions were shown to you, through highlighted text and category ratings? Is there a way we can improve this?
+        textarea#exitUIInput(type='text', cols='75', rows='4')
+        .floatfix  
+        br
+        hr
+    
+      //- Open comments (existing text)
+
+      p
+      #exitcomments
+        .label
+          | Tell us more...
+        .instructions_show
+          | Any other questions, comments, suggestions, etc?
+        textarea#exitCommentsInput(type='text', cols='75', rows='4')
+        .floatfix
+
+    .surveyLower
+
+      input#endExperimentButton(type='submit', value='Done')
+
+  #exit_survey_unenhanced

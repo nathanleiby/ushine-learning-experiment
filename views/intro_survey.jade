@@ -1,0 +1,70 @@
+#intro_survey.inactiveStage
+  
+  .surveyUpper
+    p
+    
+    h2 <b>Help design a better tool for organizing and spreading information during disputed elections, natural disasters, and other crisis situations by participating in a <u>15 minute experiment</u> from your computer.</b>
+    
+    p Thank you!<br>The Data Science for Social Good team<br>dssg-ushahidi@googlegroups.com
+    
+    hr
+
+    p
+    #introemail
+      .label
+        | E-mail Address
+      .instructions_show
+        | <i>We'll keep your e-mail address private, and use it only to send you a follow-up thanks for participating plus our study's results.</i>
+      input#emailinput(type='text', name='introemail', size='50')
+      .floatfix
+
+    hr
+      
+    p
+    #introenglish
+      .label
+        | English Experience
+      //- .instructions_show
+        | Our experiment is in English for now. What's your English level?
+      
+      p
+      input(type="radio", name="introenglish", value="fluent") 
+      | Fluent
+      input(type="radio", name="introenglish", value="good") 
+      | Good 
+      input(type="radio", name="introenglish", value="beginner") 
+      | Beginner
+      .floatfix
+    
+    hr
+    
+    p
+    #introushahidiexperience
+      .label
+        | How many incident reports have you reviewed/annotated before, if any?
+      .instructions_show
+        | <i>For example, in Ushahidi, CrowdMap, Standby Task Force, etc. (reviewing, geo-locating, categorizing, etc.)</i>
+      
+      p
+      input(type="radio", name="introushahidiexperience", value="none") 
+      | None 
+      input(type="radio", name="introushahidiexperience", value="few") 
+      | A few 
+      input(type="radio", name="introushahidiexperience", value="lots") 
+      | Lots 
+      .floatfix
+    
+    hr
+    
+    p
+    #introcomments
+      .label
+        | Comments
+      .instructions_show
+        | Any questions, comments, description of your  background, etc?
+        textarea#commentsinput(type='text', cols='75', rows='4', name='introcomments')
+      .floatfix
+
+  .surveyLower
+
+    input#startExperimentButton(type='submit', value='Begin')

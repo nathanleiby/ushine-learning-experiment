@@ -1,0 +1,108 @@
+!!! 5
+html
+head
+    title
+      | DSSG Experiment!
+    meta(http-equiv='content-type', content='text/html;charset=utf-8')
+    link(rel='shortcut icon', href='favicon.ico')
+    link(rel='stylesheet', href='experiment.css', type='text/css')
+  body.enhanced
+    #container
+      #header
+        | DSSG Experiment: Witty Title
+        span#header-timer 14:59 remaining
+        span#header-completed n messages completed
+      #main
+        .label
+          | Message:
+        #message
+          p
+            | This is a message about how
+            span.selected-pii Kwang
+            | ,
+            span.guess-pii Nathan
+            | ,
+            span.guess-pii Kayla
+            | and
+            span.guess-pii Elena
+            | are in
+            span.guess-location Chicago
+            | !
+          p
+            span.guess-url http://dssg.io
+        #pii.task
+          .label
+            | 1) Private / sensitive information
+            span.key
+          .instructions
+            | Instructions
+          .done
+            input.done(type='submit', value='Done')
+          .floatfix
+        #location.task
+          .label
+            | 2) Location
+            span.key
+          .instructions
+            | Instructions
+          input(type='text', name='location', size='50')
+          .floatfix
+          .done
+            input.done(type='submit', value='Done')
+          .floatfix
+        #url.task.enabled
+          .label
+            | 3) URL(s)
+            span.key
+          .instructions
+            | Instructions
+          textarea#url(name='url')
+          .floatfix
+          .done
+            input.done(type='submit', value='Done')
+          .floatfix
+        #category.task
+          .label
+            | 4) Category(ies)
+          .instructions
+            | Instructions
+          table
+            tr
+              td
+                input(type='checkbox', name='option-food', value='Food')
+                | Food
+              td
+                .confidencebar
+                  .confidencebar-10
+                    .confidencebar-inside
+            tr
+              td
+                input(type='checkbox', name='option-water', value='Water')
+                | Water
+              td
+                .confidencebar
+                  .confidencebar-60
+                    .confidencebar-inside
+            tr
+              td
+                input(type='checkbox', name='option-clowns', value='Clowns')
+                | Clowns
+              td
+                .confidencebar
+                  .confidencebar-20
+                    .confidencebar-inside
+            tr
+              td
+                input(type='checkbox', name='option-death', value='Death')
+                | Death
+              td
+                .confidencebar
+                  .confidencebar-90
+                    .confidencebar-inside
+          .floatfix
+          .done
+            input.done(type='submit', value='Done')
+          .floatfix
+      .floatfix
+      #footer
+        | footer content
