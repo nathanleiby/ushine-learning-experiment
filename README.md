@@ -29,22 +29,6 @@ To run the app:
 $ node app.js
 ```
 
-## Future Plans
-
-### Re-run experiment with improved machine
-
-To run this experiment again in the future, it would be possible to either:
-
-1. Update the `messages.json` file to have new machine suggestions. Verify that new suggestions
-
-2. Based on user feedback from our study, it might be worthwhile to modify the node app. One reason we didn't do this immediately is that we didn't expect so many users to take our experiment, so we sought to keep a consistent testing environment. If the experiment itself is changed, then the numbers produced in this first experiment will no longer be directly comparable.
-    1. Unify all user input to mouse-clicks on works. Click-and-drag is painful.
-    2. Remove highlight URL as a task. Machines should be perfect at extracting these. We only measured this task so we had a baseline to understand how much time users spent on this before.
-    
-### Add timing hooks into Ushahidi
-
-As another important measurement, we'd also like to record real-world timing data. This means adding timing hooks to the Ushahidi platform itself.
-
 ## Tips
 
 There are many commands you can run from inside the JavaScript console to jump around and debug.
@@ -61,6 +45,22 @@ There are many commands you can run from inside the JavaScript console to jump a
     - `updateExperimentStage('intro_survey')`
     - `updateExperimentStage('annotate_messages')`
     - `updateExperimentStage('exit_survey')`
+
+## Future Plans
+
+### Re-run experiment with improved machine
+
+To run this experiment again in the future, it would be possible to either:
+
+1. Update the `messages.json` file to have new machine suggestions. Verify that new suggestions
+
+2. Based on user feedback from our study, it might be worthwhile to modify the node app. One reason we didn't do this immediately is that we didn't expect so many users to take our experiment, so we sought to keep a consistent testing environment. If the experiment itself is changed, then the numbers produced in this first experiment will no longer be directly comparable.
+    1. Unify all user input to mouse-clicks on works. Click-and-drag is painful.
+    2. Remove highlight URL as a task. Machines should be perfect at extracting these. We only measured this task so we had a baseline to understand how much time users spent on this before.
+    
+### Add timing hooks into Ushahidi
+
+As another important measurement, we'd also like to record real-world timing data. This means adding timing hooks to the Ushahidi platform itself.
 
 ## Thanks
 
